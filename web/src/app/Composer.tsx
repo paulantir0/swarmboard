@@ -3,9 +3,13 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import { api, POST_KINDS, type PostKind } from '../api'
 import { Icon } from '../components/Icon'
 import { MarkdownField } from '../components/MarkdownField'
+import { PriorityIcon } from '../components/Marks'
+import { Select } from '../components/Select'
 import { KIND_LABEL, PRIORITY_LABEL } from '../lib/labels'
 import { useShell } from './context'
 import { ViewHeader } from './ViewHeader'
+
+const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
 
 export function Composer() {
   const { teamId, base, boards, refreshBoards } = useShell()
@@ -48,7 +52,7 @@ export function Composer() {
   }
 
   const back = (
-    <Link className="btn btn-ghost btn-icon" to={`${base}${initialBoard ? `?board=${encodeURIComponent(initialBoard)}` : ''}`} aria-label="Back">
+    <Link className="btn btn-ghost btn-sm btn-icon" to={`${base}${initialBoard ? `?board=${encodeURIComponent(initialBoard)}` : ''}`} aria-label="Back">
       <Icon name="arrowLeft" />
     </Link>
   )
@@ -58,34 +62,38 @@ export function Composer() {
       <ViewHeader title="New post" back={back} />
       <form className="composer" onSubmit={submit}>
         <div className="composer-meta">
-          <input
-            className="field select-sm composer-topic"
-            aria-label="Topic"
-            placeholder="topic"
-            list="composer-topics"
-            value={board || boards[0]?.key || ''}
-            onChange={(e) => setBoard(e.target.value)}
-            required
-          />
+          <span className="pill-field">
+            <Icon name="hash" size={14} />
+            <input
+              className="pill-input mono"
+              aria-label="Topic"
+              placeholder="topic"
+              list="composer-topics"
+              value={board || boards[0]?.key || ''}
+              onChange={(e) => setBoard(e.target.value)}
+              size={Math.max(6, (board || boards[0]?.key || '').length + 1)}
+              required
+            />
+          </span>
           <datalist id="composer-topics">
             {boards.map((b) => (
               <option key={b.id} value={b.key} />
             ))}
           </datalist>
-          <select className="select select-sm" aria-label="Kind" value={kind} onChange={(e) => setKind(e.target.value as PostKind)}>
+          <Select aria-label="Kind" icon={<Icon name="tag" size={14} />} value={kind} onChange={(e) => setKind(e.target.value as PostKind)}>
             {POST_KINDS.map((k) => (
               <option key={k} value={k}>
                 {KIND_LABEL[k]}
               </option>
             ))}
-          </select>
-          <select className="select select-sm" aria-label="Priority" value={priority} onChange={(e) => setPriority(Number(e.target.value))}>
+          </Select>
+          <Select aria-label="Priority" icon={<PriorityIcon priority={priority} />} value={priority} onChange={(e) => setPriority(Number(e.target.value))}>
             {[0, 1, 2, 3, 4].map((p) => (
               <option key={p} value={p}>
                 {PRIORITY_LABEL[p]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <input
           className="field field-title"
@@ -110,14 +118,18 @@ export function Composer() {
               {kind === 'task' ? (
                 <label className="check">
                   <input type="checkbox" checked={claim} onChange={(e) => setClaim(e.target.checked)} />
-                  Claim
+                  Claim it
                 </label>
               ) : null}
-              <Link className="btn" to={base}>
+              <span className="kbd-hint" title={`${MOD_KEY} + Enter`}>
+                <span className="kbd">{MOD_KEY}</span>
+                <span className="kbd">↵</span>
+              </span>
+              <Link className="btn btn-ghost btn-sm" to={`${base}${initialBoard ? `?board=${encodeURIComponent(initialBoard)}` : ''}`}>
                 Cancel
               </Link>
-              <button className="btn btn-primary" type="submit" disabled={busy || uploading || !title.trim() || !boardKey}>
-                Create
+              <button className="btn btn-primary btn-sm" type="submit" disabled={busy || uploading || !title.trim() || !boardKey}>
+                Create post
               </button>
             </>
           }

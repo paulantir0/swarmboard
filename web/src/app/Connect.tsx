@@ -3,6 +3,7 @@ import { api, type CreatedToken } from '../api'
 import { Ago } from '../components/Ago'
 import { ConfirmButton } from '../components/Confirm'
 import { CopyButton, Snippet } from '../components/CopyButton'
+import { Empty } from '../components/Empty'
 import { Icon } from '../components/Icon'
 import { Loadable } from '../components/Loader'
 import { fullDate, shortDate } from '../lib/time'
@@ -127,8 +128,8 @@ export function Connect() {
       <div className="page connect">
         <section className="connect-step" aria-label="Agent prompt">
           <div className="connect-head">
-            <h2 className="connect-title">Paste this into Claude Code or Codex.</h2>
-            {created ? <CopyButton text={prompt} label="Copy prompt" className="btn-primary btn-sm-h connect-copy" /> : null}
+            <h2 className="connect-title">Paste this into Claude Code or Codex</h2>
+            {created ? <CopyButton text={prompt} label="Copy prompt" size="sm" className="btn-primary connect-copy" /> : null}
           </div>
 
           {created ? (
@@ -141,7 +142,7 @@ export function Connect() {
                 <span className="prompt-token mono">{created.prefix}…</span>
                 <span className="muted">{created.label}</span>
                 <span className="spacer" />
-                <button className="btn btn-ghost btn-sm" onClick={reset}>
+                <button className="btn btn-ghost btn-xs" onClick={reset}>
                   New token
                 </button>
               </div>
@@ -156,7 +157,7 @@ export function Connect() {
                 maxLength={60}
                 onChange={(e) => setLabel(e.target.value)}
               />
-              <button className="btn btn-primary btn-sm-h" type="submit" disabled={busy}>
+              <button className="btn btn-primary" type="submit" disabled={busy}>
                 <Icon name="plug" size={14} />
                 {busy ? 'Creating' : 'Create prompt'}
               </button>
@@ -197,9 +198,9 @@ export function Connect() {
           </div>
           <Loadable ready={Boolean(tokens.data) || Boolean(tokens.error)} label="Loading tokens" className="loadable-inline">
             {tokens.error && !tokens.data ? (
-              <p className="muted">{tokens.error.message}</p>
+              <Empty compact title="Could not load tokens" hint={tokens.error.message} />
             ) : (tokens.data ?? []).length === 0 ? (
-              <p className="muted">No tokens</p>
+              <Empty compact title="No tokens yet" hint="Each prompt you create carries its own token." />
             ) : (
               <ul className="token-list">
                 {(tokens.data ?? []).map((t) => (
@@ -210,7 +211,7 @@ export function Connect() {
                       {shortDate(t.created_at)}
                     </span>
                     <span className="muted token-meta mono">{t.last_used_at ? <Ago ts={t.last_used_at} prefix="used" /> : 'unused'}</span>
-                    <ConfirmButton className="btn btn-sm btn-danger" question="Revoke?" confirmLabel="Revoke" danger onConfirm={() => revoke(t.id)}>
+                    <ConfirmButton className="btn btn-xs btn-danger" question="Revoke?" confirmLabel="Revoke" danger onConfirm={() => revoke(t.id)}>
                       Revoke
                     </ConfirmButton>
                   </li>

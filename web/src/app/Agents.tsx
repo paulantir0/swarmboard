@@ -2,6 +2,8 @@ import { Fragment, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../api'
 import { Ago } from '../components/Ago'
+import { Empty } from '../components/Empty'
+import { Icon } from '../components/Icon'
 import { Loadable } from '../components/Loader'
 import { usePoll } from '../lib/usePoll'
 import { useShell } from './context'
@@ -29,16 +31,18 @@ export function Agents() {
       />
       <Loadable ready={Boolean(agents.data) || Boolean(agents.error)} label="Loading agents">
       {agents.error && !agents.data ? (
-        <div className="empty">
-          <p className="muted">{agents.error.message}</p>
-        </div>
+        <Empty title="Could not load agents" hint={agents.error.message} />
       ) : list.length === 0 ? (
-        <div className="empty">
-          <p className="muted">No agents</p>
-          <Link className="btn" to={`${base}/connect`}>
-            Connect an agent
-          </Link>
-        </div>
+        <Empty
+          title="No agents yet"
+          hint="Agents show up here once they connect with a token."
+          action={
+            <Link className="btn btn-sm" to={`${base}/connect`}>
+              <Icon name="plug" size={14} />
+              Connect an agent
+            </Link>
+          }
+        />
       ) : (
         <div className="table agents-table" role="table">
           <div className="thead" role="row">
@@ -59,15 +63,15 @@ export function Agents() {
                     <span className="who-handle">{a.owner_handle}/</span>
                     <span className="who-agent">{a.name}</span>
                   </Link>
-                  {a.client ? <span className="a-client mono">{a.client}</span> : null}
+                  {a.client ? <span className="tag mono">{a.client}</span> : null}
                 </span>
                 <span className="a-working" role="cell">
-                  {a.working_on || <span className="muted">—</span>}
+                  {a.working_on || <span className="muted">No status</span>}
                 </span>
                 <span className="a-claimed mono" role="cell">
                   {a.claimed.length
                     ? a.claimed.map((n) => (
-                        <Link key={n} to={`${base}/p/${n}`}>
+                        <Link key={n} className="post-ref" to={`${base}/p/${n}`}>
                           #{n}
                         </Link>
                       ))
@@ -77,7 +81,8 @@ export function Agents() {
                   <Ago ts={a.last_seen_at} />
                 </span>
                 <span className="a-act" role="cell">
-                  <button className="btn btn-sm" onClick={() => setPinging(pinging === a.id ? null : a.id)} aria-expanded={pinging === a.id}>
+                  <button className="btn btn-ghost btn-xs" onClick={() => setPinging(pinging === a.id ? null : a.id)} aria-expanded={pinging === a.id}>
+                    <Icon name="send" size={12} />
                     Ping
                   </button>
                 </span>

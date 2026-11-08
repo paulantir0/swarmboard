@@ -2,10 +2,13 @@ import { useState } from 'react'
 import { api, ApiError, type Claims, type Lease } from '../api'
 import { Ago, Until } from '../components/Ago'
 import { Confirm } from '../components/Confirm'
+import { Empty } from '../components/Empty'
 import { Loadable } from '../components/Loader'
+import { Icon } from '../components/Icon'
 import { Who } from '../components/Marks'
 import { usePoll } from '../lib/usePoll'
 import { useShell } from './context'
+import { Claim } from './PostList'
 import { ViewHeader } from './ViewHeader'
 
 const EMPTY: Claims = { leases: [], queue: [] }
@@ -63,18 +66,17 @@ export function ClaimsView() {
       {error ? <p className="error-text claims-error">{error}</p> : null}
       <Loadable ready={Boolean(data) || Boolean(claims.error)} label="Loading claims">
       {!data ? (
-        <div className="empty">{claims.error ? <p className="muted">{claims.error.message}</p> : null}</div>
+        claims.error ? <Empty title="Could not load claims" hint={claims.error.message} /> : <div className="empty" />
       ) : leases.length === 0 && queue.length === 0 ? (
-        <div className="empty">
-          <p className="muted">No claims</p>
-        </div>
+        <Empty title="Nothing claimed" hint="Agents claim files, resources and tasks before they touch them. Their leases show up here." />
       ) : (
         <div className={`claims ${canRelease ? 'can-release' : ''}`}>
           {byRepo(leases).map(([repo, list]) => (
             <section key={repo || '-'} aria-label={repo || 'Team-wide'}>
               <h2 className="claims-head">
-                <span className={repo ? 'mono' : ''}>{repo || 'Team-wide'}</span>
-                <span className="group-count">{list.length}</span>
+                <Icon name={repo ? 'folder' : 'users'} size={14} />
+                <span className={repo ? 'mono claims-repo' : ''}>{repo || 'Team-wide'}</span>
+                <span className="group-count mono">{list.length}</span>
               </h2>
               {list.map((l) => (
                 <div key={`${l.repo}:${l.scope}`} className={`claim-row ${asking === `${l.repo}:${l.scope}` ? 'asking' : ''}`}>
@@ -82,16 +84,16 @@ export function ClaimsView() {
                     {l.scope}
                   </span>
                   <span className="cl-who">
-                    <Who author={l.holder} me={me.user.id} />
+                    <Claim author={l.holder} meId={me.user.id} />
                   </span>
-                  <span className="cl-note">{l.note || <span className="muted">—</span>}</span>
+                  <span className="cl-note">{l.note || <span className="muted">No note</span>}</span>
                   <span className="cl-time mono muted">
                     <Until ts={l.expires_at} prefix="expires" />
                   </span>
                   {canRelease ? (
                     <span className="cl-act">
                       <button
-                        className="btn btn-sm"
+                        className="btn btn-xs"
                         disabled={busy === `${l.repo}:${l.scope}` || asking === `${l.repo}:${l.scope}`}
                         onClick={() => setAsking(`${l.repo}:${l.scope}`)}
                       >
@@ -120,8 +122,9 @@ export function ClaimsView() {
           {queue.length ? (
             <section aria-label="Queue">
               <h2 className="claims-head">
+                <Icon name="clock" size={14} />
                 <span>Queue</span>
-                <span className="group-count">{queue.length}</span>
+                <span className="group-count mono">{queue.length}</span>
               </h2>
               {queue.map((w) => (
                 <div key={`${w.repo}:${w.scope}:${w.position}:${w.waiter.display}`} className="claim-row">

@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router'
 import { api, type Agent, type Lease } from '../api'
 import { Ago, Until } from '../components/Ago'
 import { ConfirmButton } from '../components/Confirm'
+import { Empty } from '../components/Empty'
 import { Icon } from '../components/Icon'
 import { Loadable } from '../components/Loader'
 import { shortDate } from '../lib/time'
@@ -14,6 +15,9 @@ import { PostRow } from './PostList'
 import { ViewHeader } from './ViewHeader'
 
 const ROLE_LABEL = { owner: 'Owner', admin: 'Admin', member: '' } as const
+
+/** "github.com/acme/robot-fleet" → "robot-fleet"; the full repo stays in the tooltip. */
+const repoName = (repo: string) => repo.replace(/\.git$/, '').split(/[/:]/).pop() || repo
 
 function Presence({ agent }: { agent: Agent }) {
   return (
@@ -47,7 +51,7 @@ export function AgentProfile() {
   }
 
   const back = (
-    <Link className="btn btn-ghost btn-icon" to={`${base}/agents`} aria-label="Agents">
+    <Link className="btn btn-ghost btn-sm btn-icon" to={`${base}/agents`} aria-label="Agents">
       <Icon name="arrowLeft" />
     </Link>
   )
@@ -68,9 +72,7 @@ export function AgentProfile() {
       />
       <Loadable ready={Boolean(profile.data) || Boolean(profile.error)} label="Loading agent">
         {!profile.data || !agent ? (
-          <div className="empty">
-            <p className="muted">{profile.error?.message}</p>
-          </div>
+          <Empty title="Could not open this agent" hint={profile.error?.message} />
         ) : (
           <div className="profile">
             <header className="profile-head">
@@ -92,7 +94,7 @@ export function AgentProfile() {
                 {agent.client ? (
                   <>
                     <span className="sep" aria-hidden="true" />
-                    <span className="chip mono">{agent.client}</span>
+                    <span className="tag mono">{agent.client}</span>
                   </>
                 ) : null}
                 {agent.repo ? (
@@ -108,7 +110,7 @@ export function AgentProfile() {
               {agent.working_on ? <p className="profile-status">{agent.working_on}</p> : null}
               <div className="profile-actions">
                 <button className="btn btn-sm" onClick={() => setMessaging((m) => !m)} aria-expanded={messaging}>
-                  <Icon name="send" size={12} />
+                  <Icon name="send" size={14} />
                   Message
                 </button>
               </div>
@@ -134,19 +136,19 @@ export function AgentProfile() {
                 </h3>
                 {profile.data.leases.map((l) => (
                   <div key={`${l.repo}:${l.scope}`} className="hold-row">
-                    <span className="mono hold-scope" title={l.repo || 'Team-wide'}>
-                      {l.scope}
-                      {l.repo ? <span className="muted"> in {l.repo}</span> : null}
+                    <span className="mono hold-scope" title={l.repo ? `${l.scope} in ${l.repo}` : `${l.scope} (team-wide)`}>
+                      <span className="hold-scope-name">{l.scope}</span>
+                      {l.repo ? <span className="hold-repo">{repoName(l.repo)}</span> : null}
                     </span>
-                    <span className="hold-note">{l.note || <span className="muted">—</span>}</span>
+                    <span className="hold-note">{l.note || <span className="muted">No note</span>}</span>
                     <Until ts={l.expires_at} prefix="expires" className="mono muted hold-time" />
-                    {canRelease ? (
-                      <span className="hold-act">
-                        <ConfirmButton question={`Release ${l.scope}?`} confirmLabel="Release" danger onConfirm={() => release(l)}>
+                    <span className="hold-act">
+                      {canRelease ? (
+                        <ConfirmButton className="btn btn-xs" question={`Release ${l.scope}?`} confirmLabel="Release" danger onConfirm={() => release(l)}>
                           Release
                         </ConfirmButton>
-                      </span>
-                    ) : null}
+                      ) : null}
+                    </span>
                   </div>
                 ))}
               </section>
@@ -159,13 +161,13 @@ export function AgentProfile() {
                 </h3>
                 {profile.data.queue.map((w) => (
                   <div key={`${w.repo}:${w.scope}`} className="hold-row">
-                    <span className="mono hold-scope">
-                      <span className="cl-pos">{w.position}</span>
-                      {w.scope}
-                      {w.repo ? <span className="muted"> in {w.repo}</span> : null}
+                    <span className="mono hold-scope" title={w.repo ? `${w.scope} in ${w.repo}` : `${w.scope} (team-wide)`}>
+                      <span className="hold-scope-name">{w.scope}</span>
+                      {w.repo ? <span className="hold-repo">{repoName(w.repo)}</span> : null}
                     </span>
-                    <span className="hold-note muted">{w.position === 1 ? 'next in line' : `#${w.position} in line`}</span>
+                    <span className="hold-note muted">{w.position === 1 ? 'Next in line' : `${w.position} in line`}</span>
                     <Ago ts={w.created_at} prefix="waiting" className="mono muted hold-time" />
+                    <span className="hold-act" />
                   </div>
                 ))}
               </section>
@@ -185,7 +187,7 @@ export function AgentProfile() {
               profile.data.recent.length ? (
                 <ActivityList events={profile.data.recent} base={base} meId={me.user.id} />
               ) : (
-                <p className="muted profile-empty">No activity</p>
+                <Empty compact title="No activity yet" />
               )
             ) : (
               <Loadable ready={Boolean(posts.data) || Boolean(posts.error)} label="Loading posts" className="loadable-inline">
@@ -196,7 +198,7 @@ export function AgentProfile() {
                     ))}
                   </div>
                 ) : (
-                  <p className="muted profile-empty">{posts.error?.message ?? 'No posts'}</p>
+                  <Empty compact title={posts.error ? 'Could not load posts' : 'No posts yet'} hint={posts.error?.message} />
                 )}
               </Loadable>
             )}
@@ -228,6 +230,11 @@ export function MemberProfile() {
   return (
     <div className="view">
       <ViewHeader
+        back={
+          <Link className="btn btn-ghost btn-sm btn-icon" to={`${base}/team`} aria-label="Team">
+            <Icon name="arrowLeft" />
+          </Link>
+        }
         title={
           <>
             <Link className="crumb" to={`${base}/team`}>
@@ -240,9 +247,7 @@ export function MemberProfile() {
       />
       <Loadable ready={Boolean(profile.data) || Boolean(profile.error)} label="Loading member">
         {!profile.data || !member ? (
-          <div className="empty">
-            <p className="muted">{profile.error?.message}</p>
-          </div>
+          <Empty title="Could not open this member" hint={profile.error?.message} />
         ) : (
           <div className="profile">
             <header className="profile-head">
@@ -259,7 +264,7 @@ export function MemberProfile() {
               {!self ? (
                 <div className="profile-actions">
                   <button className="btn btn-sm" onClick={() => setMessaging((m) => !m)} aria-expanded={messaging}>
-                    <Icon name="send" size={12} />
+                    <Icon name="send" size={14} />
                     Message
                   </button>
                 </div>
@@ -282,18 +287,18 @@ export function MemberProfile() {
                       <span className="agent-card-head">
                         <span className={`live-dot ${a.active ? 'on' : ''}`} aria-hidden="true" />
                         <span className="mono agent-card-name">{a.name}</span>
-                        {a.client ? <span className="chip mono">{a.client}</span> : null}
+                        {a.client ? <span className="tag mono">{a.client}</span> : null}
                       </span>
-                      <span className="agent-card-status">{a.working_on || <span className="muted">—</span>}</span>
+                      <span className="agent-card-status">{a.working_on || <span className="muted">No status</span>}</span>
                       <span className="agent-card-foot mono muted">
                         {a.active ? 'active' : <Ago ts={a.last_seen_at} prefix="seen" />}
-                        {a.repo ? <span className="agent-card-repo"> · {a.repo.split('/').pop()}</span> : null}
+                        {a.repo ? <span className="agent-card-repo"> · {repoName(a.repo)}</span> : null}
                       </span>
                     </Link>
                   ))}
                 </div>
               ) : (
-                <p className="muted profile-empty">No agents</p>
+                <Empty compact title="No agents yet" />
               )}
             </section>
 
@@ -302,7 +307,7 @@ export function MemberProfile() {
               {profile.data.recent.length ? (
                 <ActivityList events={profile.data.recent} base={base} meId={me.user.id} />
               ) : (
-                <p className="muted profile-empty">No activity</p>
+                <Empty compact title="No activity yet" />
               )}
             </section>
           </div>

@@ -81,7 +81,11 @@ pre,
   outline-offset: var(--focus-ring-offset);
 }
 
-/* Buttons */
+/* Buttons: one system.
+ * Sizes: .btn 32px (forms, beside 32px fields), .btn-sm 28px (headers and toolbars),
+ * .btn-xs 24px (inside rows, menus and inline confirms). .btn-icon makes any size square.
+ * Variants: secondary (default), .btn-primary (one per view, the main action), .btn-ghost,
+ * .btn-danger (secondary with danger ink), .btn-danger-solid (confirming a destructive step). */
 button {
   font: inherit;
   color: inherit;
@@ -92,7 +96,7 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-2);
+  gap: 6px;
   height: var(--control-height-small);
   padding: 0 var(--space-3);
   border: 1px solid var(--button-secondary-border);
@@ -109,6 +113,10 @@ button {
   touch-action: manipulation;
   transition: var(--motion-transition-control);
   user-select: none;
+}
+
+.btn > svg {
+  flex: none;
 }
 
 .btn:hover:not(:disabled) {
@@ -141,12 +149,20 @@ button {
 .btn-ghost {
   background: transparent;
   border-color: transparent;
+  color: var(--color-ink-secondary);
+}
+
+.btn-ghost > svg {
   color: var(--color-ink-muted);
 }
 
 .btn-ghost:hover:not(:disabled) {
   background: var(--color-hover);
   border-color: transparent;
+  color: var(--color-ink);
+}
+
+.btn-ghost:hover:not(:disabled) > svg {
   color: var(--color-ink);
 }
 
@@ -160,8 +176,26 @@ button {
   color: var(--button-danger-foreground);
 }
 
+.btn-danger-solid {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-on-action);
+}
+
+.btn-danger-solid:hover:not(:disabled) {
+  background: var(--color-danger-text);
+  border-color: var(--color-danger-text);
+  color: var(--color-on-action);
+}
+
 .btn-sm {
+  height: var(--control-height-compact);
+  padding: 0 10px;
+}
+
+.btn-xs {
   height: var(--control-height-micro);
+  gap: var(--space-1);
   padding: 0 var(--space-2);
   font-size: var(--text-xs);
 }
@@ -172,7 +206,23 @@ button {
 }
 
 .btn-sm.btn-icon {
+  width: var(--control-height-compact);
+}
+
+.btn-xs.btn-icon {
   width: var(--control-height-micro);
+}
+
+/* A keycap riding inside a button: the shortcut, quieter than the label. */
+.btn .kbd {
+  height: 16px;
+  min-width: 16px;
+  margin-left: 2px;
+  margin-right: -2px;
+  border-bottom-width: 1px;
+  background: transparent;
+  color: var(--color-ink-muted);
+  font-size: 11px;
 }
 
 /* Fields */
@@ -227,19 +277,7 @@ button {
 
 .select {
   appearance: none;
-  padding-right: var(--space-8);
-  background-image: linear-gradient(45deg, transparent 50%, var(--color-ink-muted) 50%),
-    linear-gradient(135deg, var(--color-ink-muted) 50%, transparent 50%);
-  background-position: calc(100% - 15px) 50%, calc(100% - 11px) 50%;
-  background-size: 4px 4px, 4px 4px;
-  background-repeat: no-repeat;
   cursor: pointer;
-}
-
-.select-sm {
-  height: var(--control-height-compact);
-  font-size: var(--text-sm);
-  padding-left: var(--space-2);
 }
 
 .label {

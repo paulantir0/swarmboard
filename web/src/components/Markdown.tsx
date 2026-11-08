@@ -98,7 +98,7 @@ function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: ()
           <Icon name="externalLink" size={12} />
           Open
         </a>
-        <button className="btn btn-sm btn-icon" onClick={onClose} aria-label="Close" autoFocus>
+        <button className="btn btn-ghost btn-sm btn-icon" onClick={onClose} aria-label="Close" autoFocus>
           <Icon name="x" size={12} />
         </button>
       </div>

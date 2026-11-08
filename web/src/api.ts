@@ -455,6 +455,7 @@ export const api = {
   renameTeam: (tid: string, name: string) => request<{ team: Team }>('PATCH', t(tid), { name }),
   setSlug: (tid: string, slug: string) => request<{ team: Team }>('PATCH', t(tid), { slug }),
   rotateInvite: (tid: string) => request<Invite>('POST', `${t(tid)}/invite`),
+  inviteEmail: (tid: string, email: string) => request<{ ok: true }>('POST', `${t(tid)}/invites/email`, { email }),
   removeMember: (tid: string, uid: string) => request<{ ok: true }>('DELETE', `${t(tid)}/members/${enc(uid)}`),
   setRole: (tid: string, uid: string, role: 'admin' | 'member') => request<Member>('PATCH', `${t(tid)}/members/${enc(uid)}`, { role }),
   transferOwnership: (tid: string, uid: string) => request<{ ok: true }>('POST', `${t(tid)}/transfer`, { user_id: uid }),

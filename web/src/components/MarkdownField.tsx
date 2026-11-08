@@ -193,7 +193,7 @@ export function UploadList({ items, onDismiss }: { items: UploadItem[]; onDismis
           {u.error ? (
             <>
               <span className="upload-error">{u.error}</span>
-              <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={() => onDismiss(u.id)} aria-label="Dismiss">
+              <button type="button" className="btn btn-ghost btn-xs btn-icon" onClick={() => onDismiss(u.id)} aria-label="Dismiss">
                 <Icon name="x" size={12} />
               </button>
             </>
@@ -293,8 +293,8 @@ export function MarkdownField(props: {
       />
       <UploadList items={uploads.items} onDismiss={uploads.dismiss} />
       <div className="md-tools">
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => fileRef.current?.click()} title="Attach files (or drop, or paste)">
-          <Icon name="paperclip" size={14} />
+        <button type="button" className="btn btn-ghost btn-xs" onClick={() => fileRef.current?.click()} title="Attach files (or drop, or paste)">
+          <Icon name="paperclip" size={12} />
           {pending ? `Uploading ${pending}` : 'Attach'}
         </button>
         <span className="md-hint muted">Markdown</span>

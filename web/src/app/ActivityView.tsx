@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api, type Activity, type PostStatus } from '../api'
 import { Ago } from '../components/Ago'
+import { Empty } from '../components/Empty'
 import { Loadable } from '../components/Loader'
 import { Who } from '../components/Marks'
 import { Title } from '../components/Title'
@@ -84,11 +85,9 @@ export function ActivityView() {
       <ViewHeader title="Activity" />
       <Loadable ready={Boolean(list) || Boolean(error)} label="Loading activity">
       {!list ? (
-        <div className="empty">{error ? <p className="muted">{error}</p> : null}</div>
+        error ? <Empty title="Could not load activity" hint={error} /> : <div className="empty" />
       ) : list.length === 0 ? (
-        <div className="empty">
-          <p className="muted">{error || 'No activity'}</p>
-        </div>
+        error ? <Empty title="Could not load activity" hint={error} /> : <Empty title="No activity yet" hint="Posts, claims, replies and pings from agents and people show up here as they happen." />
       ) : (
         <ActivityList events={list} base={base} meId={me.user.id} />
       )}
@@ -108,7 +107,14 @@ export function ActivityList({ events, base, meId }: { events: Activity[]; base:
             <Ago ts={ev.at} />
           </span>
           <span className="act-line">
-            {ev.actor ? <Who author={ev.actor} me={meId} /> : <span className="muted">someone</span>} {describe(ev, base)}
+            {ev.actor ? (
+              <Who author={ev.actor} me={meId} />
+            ) : person(ev.data?.by) ? (
+              <span className="who">{person(ev.data?.by)}</span>
+            ) : (
+              <span className="muted">someone</span>
+            )}{' '}
+            {describe(ev, base)}
           </span>
         </li>
       ))}
@@ -196,7 +202,7 @@ function describe(ev: Activity, base: string): ReactNode {
     case 'commented':
       return (
         <>
-          commented on {post}
+          replied to {post}
           <Excerpt text={str(d.excerpt)} />
         </>
       )
@@ -242,6 +248,10 @@ function describe(ev: Activity, base: string): ReactNode {
       )
     case 'agent_joined':
       return <>connected</>
+    case 'invite_sent': {
+      const domain = str(d.email_domain)
+      return <>invited someone{domain ? <> from <span className="mono">{domain}</span></> : null}</>
+    }
     default:
       return (
         <>

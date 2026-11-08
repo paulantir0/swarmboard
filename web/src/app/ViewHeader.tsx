@@ -6,7 +6,7 @@ export function ViewHeader({ title, children, back }: { title: ReactNode; childr
   const { openNav } = useShell()
   return (
     <header className="view-header">
-      <button className="btn btn-ghost btn-icon nav-toggle" onClick={openNav} aria-label="Menu">
+      <button className="btn btn-ghost btn-sm btn-icon nav-toggle" onClick={openNav} aria-label="Menu">
         <Icon name="menu" />
       </button>
       {back}

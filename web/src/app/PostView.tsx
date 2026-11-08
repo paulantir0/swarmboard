@@ -3,16 +3,18 @@ import { Link, useParams } from 'react-router'
 import { api, ApiError, POST_KINDS, POST_STATUSES, type Post, type PostPatch, type PostStatus } from '../api'
 import { Ago } from '../components/Ago'
 import { ConfirmButton } from '../components/Confirm'
+import { Empty } from '../components/Empty'
 import { Icon } from '../components/Icon'
 import { Loadable } from '../components/Loader'
 import { Markdown } from '../components/Markdown'
 import { MarkdownField } from '../components/MarkdownField'
 import { PriorityIcon, StatusIcon, Who } from '../components/Marks'
+import { Select } from '../components/Select'
 import { Title } from '../components/Title'
 import { KIND_LABEL, PRIORITY_LABEL, STATUS_LABEL } from '../lib/labels'
 import { usePoll } from '../lib/usePoll'
 import { useShell } from './context'
-import { Claim } from './PostList'
+import { Claim, KindTag } from './PostList'
 import { ViewHeader } from './ViewHeader'
 
 const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
@@ -87,14 +89,14 @@ export function PostView() {
       setComment('')
       detail.setData((prev) => (prev ? { post: { ...prev.post, comment_count: prev.post.comment_count + 1 }, comments: [...prev.comments, c] } : prev!))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not comment')
+      setError(err instanceof Error ? err.message : 'Could not reply')
     } finally {
       setBusy(false)
     }
   }
 
   const back = (
-    <Link className="btn btn-ghost btn-icon" to={post ? `${base}?board=${encodeURIComponent(post.board_key)}` : base} aria-label="Back">
+    <Link className="btn btn-ghost btn-sm btn-icon" to={post ? `${base}?board=${encodeURIComponent(post.board_key)}` : base} aria-label="Back">
       <Icon name="arrowLeft" />
     </Link>
   )
@@ -104,7 +106,19 @@ export function PostView() {
       <div className="view">
         <ViewHeader title={<span className="mono">#{n}</span>} back={back} />
         <Loadable ready={Boolean(detail.error)} label={`Loading #${n}`}>
-          <div className="empty">{detail.error ? <p className="muted">{detail.error.message}</p> : null}</div>
+          {detail.error ? (
+            <Empty
+              title={`Could not open #${n}`}
+              hint={detail.error.message}
+              action={
+                <Link className="btn btn-sm" to={base}>
+                  All posts
+                </Link>
+              }
+            />
+          ) : (
+            <div className="empty" />
+          )}
         </Loadable>
       </div>
     )
@@ -152,10 +166,10 @@ export function PostView() {
                 onBusyChange={setBodyUploading}
                 actions={
                   <>
-                    <button className="btn" onClick={() => setEditing(false)}>
+                    <button className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>
                       Cancel
                     </button>
-                    <button className="btn btn-primary" onClick={saveEdit} disabled={busy || bodyUploading || !title.trim()}>
+                    <button className="btn btn-primary btn-sm" onClick={saveEdit} disabled={busy || bodyUploading || !title.trim()}>
                       Save
                     </button>
                   </>
@@ -167,7 +181,8 @@ export function PostView() {
               <h2 className="detail-title">
                 <Title text={post.title} />
               </h2>
-              <div className="detail-byline">
+              <div className="detail-meta">
+                <KindTag kind={post.kind} />
                 <Who author={post.author} me={meId} />
                 <Ago ts={post.created_at} className="muted mono" />
               </div>
@@ -175,37 +190,41 @@ export function PostView() {
             </>
           )}
 
-          <section className="comments" aria-label="Comments">
+          <section className="thread" aria-label="Replies">
             <h3 className="section-title">
-              Comments <span className="mono muted">{comments.length}</span>
+              Replies <span className="mono muted">{comments.length}</span>
             </h3>
-            {comments.map((c) => (
-              <div className="comment" key={c.id}>
-                <div className="comment-head">
-                  <Who author={c.author} me={meId} />
-                  <Ago ts={c.created_at} className="muted mono" />
-                </div>
-                <Markdown source={c.body} className="comment-body" />
-              </div>
-            ))}
-            <div className="comment-box">
+            {comments.length ? (
+              <ol className="thread-list">
+                {comments.map((c) => (
+                  <li className="reply" key={c.id}>
+                    <div className="reply-head">
+                      <Who author={c.author} me={meId} />
+                      <Ago ts={c.created_at} className="muted mono" />
+                    </div>
+                    <Markdown source={c.body} className="reply-body" />
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+            <div className="reply-box">
               <MarkdownField
                 teamId={teamId}
                 value={comment}
                 onChange={setComment}
                 onSubmit={sendComment}
-                placeholder="Comment"
+                placeholder="Reply"
                 rows={3}
                 dropTarget={1}
                 onBusyChange={setCommentUploading}
                 actions={
                   <>
-                    <span className="kbd-hint muted" title={`${MOD_KEY} + Enter`}>
+                    <span className="kbd-hint" title={`${MOD_KEY} + Enter`}>
                       <span className="kbd">{MOD_KEY}</span>
                       <span className="kbd">↵</span>
                     </span>
-                    <button className="btn btn-primary" onClick={sendComment} disabled={busy || commentUploading || !comment.trim()}>
-                      Comment
+                    <button className="btn btn-primary btn-sm" onClick={sendComment} disabled={busy || commentUploading || !comment.trim()}>
+                      Reply
                     </button>
                   </>
                 }
@@ -215,28 +234,26 @@ export function PostView() {
         </article>
 
         <aside className="props" aria-label="Properties">
-          <div className="prop">
+          <div className="prop prop-claim">
             <span className="prop-label">Claim</span>
             <div className="prop-value claim-box">
               {claimer ? (
                 <>
-                  <div className="claim-who">
-                    <Claim author={claimer} meId={meId} />
-                    {post.claimed_at ? <Ago ts={post.claimed_at} className="muted mono" /> : null}
-                  </div>
+                  <Claim author={claimer} meId={meId} />
+                  {post.claimed_at ? <Ago ts={post.claimed_at} prefix="since" className="claim-since muted mono" /> : null}
                   <div className="claim-actions">
                     {mine ? (
                       <>
-                        <button className="btn btn-sm" disabled={busy} onClick={() => release()}>
+                        <button className="btn btn-xs" disabled={busy} onClick={() => release()}>
                           Release
                         </button>
-                        <button className="btn btn-sm" disabled={busy} onClick={() => release('done')}>
+                        <button className="btn btn-xs" disabled={busy} onClick={() => release('done')}>
                           Done
                         </button>
                       </>
                     ) : (
                       <ConfirmButton
-                        className="btn btn-sm"
+                        className="btn btn-xs"
                         disabled={busy}
                         question={`Take over from ${claimer.display}?`}
                         confirmLabel="Take over"
@@ -248,7 +265,8 @@ export function PostView() {
                   </div>
                 </>
               ) : (
-                <button className="btn btn-sm" disabled={busy} onClick={() => claim(false)}>
+                <button className="btn btn-xs claim-btn" disabled={busy} onClick={() => claim(false)}>
+                  <Icon name="lock" size={12} />
                   Claim
                 </button>
               )}
@@ -273,6 +291,7 @@ export function PostView() {
           />
           <PropSelect
             label="Kind"
+            icon={<Icon name="tag" size={14} />}
             value={post.kind}
             options={POST_KINDS.map((k) => [k, KIND_LABEL[k]])}
             onChange={(v) => patch({ kind: v as Post['kind'] })}
@@ -280,14 +299,18 @@ export function PostView() {
           />
           <PropSelect
             label="Topic"
+            icon={<Icon name="hash" size={14} />}
             value={post.board_key}
             options={boards.map((b) => [b.key, b.key])}
             onChange={(v) => patch({ board: v })}
             disabled={busy}
           />
-          <div className="prop">
+          <div className="prop prop-updated">
             <span className="prop-label">Updated</span>
-            <Ago ts={post.updated_at} className="prop-value mono muted" />
+            <span className="prop-value prop-static">
+              <Icon name="clock" size={14} />
+              <Ago ts={post.updated_at} className="mono" />
+            </span>
           </div>
           {error ? <p className="error-text prop-error">{error}</p> : null}
         </aside>
@@ -310,16 +333,15 @@ function PropSelect(props: {
   return (
     <label className="prop">
       <span className="prop-label">{label}</span>
-      <span className="prop-value prop-select">
-        {icon ? <span className="prop-icon">{icon}</span> : null}
-        <select className="select select-sm select-quiet" aria-label={label} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+      <span className="prop-value">
+        <Select variant="quiet" icon={icon} aria-label={label} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
           {!has ? <option value={value}>{value}</option> : null}
           {options.map(([v, l]) => (
             <option key={v} value={v}>
               {l}
             </option>
           ))}
-        </select>
+        </Select>
       </span>
     </label>
   )

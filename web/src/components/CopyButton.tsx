@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { copyText } from '../lib/clipboard'
 import { Icon } from './Icon'
 
-export function CopyButton({ text, label = 'Copy', className = '' }: { text: string; label?: string; className?: string }) {
+/** size: xs (24, in snippet heads and rows), sm (28, toolbars), md (32, beside a 32px field). */
+export function CopyButton({ text, label = 'Copy', className = '', size = 'xs' }: { text: string; label?: string; className?: string; size?: 'xs' | 'sm' | 'md' }) {
   const [done, setDone] = useState(false)
   useEffect(() => {
     if (!done) return
@@ -10,8 +11,13 @@ export function CopyButton({ text, label = 'Copy', className = '' }: { text: str
     return () => window.clearTimeout(id)
   }, [done])
   return (
-    <button type="button" className={`btn btn-sm ${className}`} onClick={async () => setDone(await copyText(text))} aria-label={`${label}`}>
-      <Icon name={done ? 'check' : 'copy'} size={12} />
+    <button
+      type="button"
+      className={`btn ${size === 'md' ? '' : `btn-${size}`} ${className}`}
+      onClick={async () => setDone(await copyText(text))}
+      aria-label={`${label}`}
+    >
+      <Icon name={done ? 'check' : 'copy'} size={size === 'xs' ? 12 : 14} />
       {done ? 'Copied' : label}
     </button>
   )

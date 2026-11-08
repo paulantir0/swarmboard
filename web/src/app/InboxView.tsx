@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../api'
 import { Ago } from '../components/Ago'
+import { Empty } from '../components/Empty'
+import { Icon } from '../components/Icon'
 import { Loadable } from '../components/Loader'
 import { Markdown } from '../components/Markdown'
 import { Who } from '../components/Marks'
@@ -33,8 +35,9 @@ export function InboxView() {
   return (
     <div className="view">
       <ViewHeader title="Inbox">
-        <button className="btn btn-primary" onClick={() => setComposing((c) => !c)} aria-expanded={composing}>
-          Send ping
+        <button className="btn btn-sm" onClick={() => setComposing((c) => !c)} aria-expanded={composing}>
+          <Icon name="send" size={14} />
+          <span className="hide-sm">Send ping</span>
         </button>
       </ViewHeader>
       {composing ? (
@@ -44,22 +47,19 @@ export function InboxView() {
       ) : null}
       <Loadable ready={Boolean(inbox.data) || Boolean(inbox.error)} label="Loading inbox">
       {inbox.error && !inbox.data ? (
-        <div className="empty">
-          <p className="muted">{inbox.error.message}</p>
-        </div>
+        <Empty title="Could not load the inbox" hint={inbox.error.message} />
       ) : pings.length === 0 ? (
-        <div className="empty">
-          <p className="muted">No pings</p>
-        </div>
+        <Empty title="No pings" hint="When an agent or teammate pings you, it lands here." />
       ) : (
         <ul className="feed">
           {pings.map((p) => (
             <li key={p.id} className={`ping ${p.read_at ? '' : 'unread'}`}>
+              <span className="ping-dot" aria-label={p.read_at ? undefined : 'Unread'} />
               <div className="ping-head">
                 <Who author={p.from} me={me.user.id} />
                 <span className="ping-target mono muted">→ {p.target}</span>
                 {p.post_number ? (
-                  <Link className="mono" to={`${base}/p/${p.post_number}`}>
+                  <Link className="ping-post-link mono" to={`${base}/p/${p.post_number}`}>
                     #{p.post_number}
                   </Link>
                 ) : null}
@@ -68,7 +68,7 @@ export function InboxView() {
               </div>
               <Markdown source={p.body} className="ping-body" />
               <div className="ping-actions">
-                <button className="btn btn-ghost btn-sm" onClick={() => setReplyTo(replyTo === p.id ? null : p.id)}>
+                <button className="btn btn-ghost btn-xs" onClick={() => setReplyTo(replyTo === p.id ? null : p.id)} aria-expanded={replyTo === p.id}>
                   Reply
                 </button>
               </div>

@@ -163,15 +163,17 @@ export function Shell() {
 
   const base = `/${slug}`
 
-  // Keyboard: c = new post (when not typing).
+  // Keyboard: c = new post (when not typing), in the topic you're looking at.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return
+      if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || e.repeat) return
       const el = e.target as HTMLElement | null
       if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return
-      if (e.key === 'c') {
+      if (e.key === 'c' || e.key === 'C') {
         e.preventDefault()
-        navigate(`${base}/new-post`)
+        const onList = window.location.pathname.replace(/\/$/, '') === base
+        const board = onList ? new URLSearchParams(window.location.search).get('board') : null
+        navigate(`${base}/new-post${board ? `?board=${encodeURIComponent(board)}` : ''}`)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -201,7 +203,7 @@ export function Shell() {
     return (
       <div className="app-loading">
         <p className="muted">Could not reach the server</p>
-        <button className="btn" onClick={() => void refreshMe()}>
+        <button className="btn btn-sm" onClick={() => void refreshMe()}>
           Retry
         </button>
       </div>
@@ -250,7 +252,7 @@ function NotMember({ slug, me, refreshMe }: { slug: string; me: Me; refreshMe: (
               <span className="mono muted">/{t.slug}</span>
             </Link>
           ))}
-          <Link className="btn btn-ghost btn-sm" to="/new">
+          <Link className="btn btn-ghost btn-sm solo-create" to="/new">
             <Icon name="plus" size={14} />
             Create org
           </Link>
@@ -399,14 +401,16 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
                 <button
                   key={t.id}
                   role="menuitem"
-                  className="menu-item"
+                  className="menu-item menu-org"
                   onClick={() => {
                     setMenu(false)
                     navigate(`/${t.slug}`)
                   }}
                 >
-                  <span className="menu-label">{t.name}</span>
-                  <span className="menu-slug mono">/{t.slug}</span>
+                  <span className="menu-org-text">
+                    <span className="menu-label">{t.name}</span>
+                    <span className="menu-slug mono">/{t.slug}</span>
+                  </span>
                   {t.id === team.id ? <Icon name="check" size={14} /> : <span className="menu-check-space" />}
                 </button>
               ))}
@@ -441,10 +445,10 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
             </div>
           ) : null}
         </div>
-        <Link className="btn btn-ghost btn-icon compose" to={`${base}/new-post`} title="New post (C)" aria-label="New post">
+        <Link className="btn btn-ghost btn-sm btn-icon compose" to={`${base}/new-post`} title="New post (C)" aria-label="New post">
           <Icon name="pencil" />
         </Link>
-        <button className="btn btn-ghost btn-icon nav-close" onClick={onClose} aria-label="Close menu">
+        <button className="btn btn-ghost btn-sm btn-icon nav-close" onClick={onClose} aria-label="Close menu">
           <Icon name="x" />
         </button>
       </div>
@@ -460,7 +464,13 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
       <div className="sb-section">
         <div className="sb-label">
           <span>Topics</span>
-          <button className="btn btn-ghost btn-sm btn-icon sb-add-btn" onClick={() => setAdding((a) => !a)} aria-label="New topic" title="New topic">
+          <button
+            className="btn btn-ghost btn-xs btn-icon sb-add-btn"
+            onClick={() => setAdding((a) => !a)}
+            aria-label="New topic"
+            aria-expanded={adding}
+            title="New topic"
+          >
             <Icon name="plus" size={14} />
           </button>
         </div>
@@ -502,12 +512,25 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
             icon="users"
             label="Team"
             countText={`${team.member_count}/${team.max_members}`}
-            active={location.pathname === `${base}/team` || location.pathname.startsWith(`${base}/members/`)}
+            active={
+              location.pathname === `${base}/team` ||
+              (location.pathname.startsWith(`${base}/members/`) && location.pathname !== `${base}/members/${me.user.id}`)
+            }
           />
         </nav>
-        <div className="sb-me">
-          <span className="mono">{me.user.handle}</span>
-        </div>
+        <nav className="sb-nav sb-me-nav">
+          <TNavLink
+            to={`${base}/members/${me.user.id}`}
+            end
+            title={me.user.email}
+            className={({ isActive }) => `sb-link sb-me ${isActive ? 'active' : ''}`}
+          >
+            <span className="sb-avatar mono" aria-hidden="true">
+              {me.user.handle.slice(0, 1)}
+            </span>
+            <span className="sb-link-label mono">{me.user.handle}</span>
+          </TNavLink>
+        </nav>
       </div>
     </aside>
   )

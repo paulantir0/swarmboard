@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { api, POST_KINDS, POST_STATUSES, type Post, type PostStatus } from '../api'
 import { Ago } from '../components/Ago'
+import { Empty } from '../components/Empty'
 import { Icon } from '../components/Icon'
 import { Loadable } from '../components/Loader'
 import { PriorityIcon, StatusIcon, Who } from '../components/Marks'
+import { Select } from '../components/Select'
 import { Title } from '../components/Title'
 import { KIND_LABEL, STATUS_LABEL, STATUS_ORDER } from '../lib/labels'
 import { usePoll } from '../lib/usePoll'
@@ -113,6 +115,18 @@ export function PostList() {
   const filtered = Boolean(kind || status || q)
   const newHref = `${base}/new-post${board ? `?board=${encodeURIComponent(board)}` : ''}`
 
+  const clearFilters = () => {
+    setSearch('')
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        for (const k of ['kind', 'status', 'q']) next.delete(k)
+        return next
+      },
+      { replace: true },
+    )
+  }
+
   return (
     <div className="view">
       <ViewHeader
@@ -128,13 +142,16 @@ export function PostList() {
           )
         }
       >
-        <Link className="btn btn-primary" to={newHref}>
+        <Link className="btn btn-sm new-post" to={newHref} title="New post (C)" aria-keyshortcuts="c">
           <Icon name="plus" size={14} />
-          <span className="hide-sm">New post</span>
+          <span className="new-post-label">New post</span>
+          <span className="kbd new-post-kbd" aria-hidden="true">
+            C
+          </span>
         </Link>
       </ViewHeader>
 
-      <div className="filters">
+      <div className="toolbar filters">
         <div className="search">
           <Icon name="search" size={14} />
           <input
@@ -148,23 +165,23 @@ export function PostList() {
           />
           {!search ? <span className="kbd search-kbd">/</span> : null}
         </div>
-        <select className="select select-sm" aria-label="Board" value={board} onChange={(e) => setParam('board', e.target.value)}>
+        <Select aria-label="Topic" value={board} on={Boolean(board)} onChange={(e) => setParam('board', e.target.value)}>
           <option value="">All topics</option>
           {boards.map((b) => (
             <option key={b.id} value={b.key}>
               {b.key}
             </option>
           ))}
-        </select>
-        <select className="select select-sm" aria-label="Kind" value={kind} onChange={(e) => setParam('kind', e.target.value)}>
+        </Select>
+        <Select aria-label="Kind" value={kind} on={Boolean(kind)} onChange={(e) => setParam('kind', e.target.value)}>
           <option value="">All kinds</option>
           {POST_KINDS.map((k) => (
             <option key={k} value={k}>
               {KIND_LABEL[k]}
             </option>
           ))}
-        </select>
-        <select className="select select-sm" aria-label="Status" value={status} onChange={(e) => setParam('status', e.target.value)}>
+        </Select>
+        <Select aria-label="Status" value={status} on={Boolean(status)} onChange={(e) => setParam('status', e.target.value)}>
           <option value="">Any status</option>
           <option value="active">Active</option>
           {POST_STATUSES.map((s) => (
@@ -172,24 +189,41 @@ export function PostList() {
               {STATUS_LABEL[s]}
             </option>
           ))}
-        </select>
+        </Select>
+        {filtered ? (
+          <button className="btn btn-ghost btn-xs filters-clear" onClick={clearFilters}>
+            <Icon name="x" size={12} />
+            Clear
+          </button>
+        ) : null}
       </div>
 
       <Loadable ready={Boolean(posts.data) || Boolean(posts.error)} label="Loading posts">
       <div className="list" role="list">
         {posts.error && !posts.data ? (
-          <div className="empty">
-            <p className="muted">{posts.error.message}</p>
-          </div>
+          <Empty title="Could not load posts" hint={posts.error.message} />
         ) : groups.length === 0 ? (
-          <div className="empty">
-            <p className="muted">{filtered ? 'No matching posts' : 'No posts'}</p>
-            {!filtered ? (
-              <Link className="btn" to={newHref}>
-                New post
-              </Link>
-            ) : null}
-          </div>
+          filtered ? (
+            <Empty
+              title="No posts match these filters"
+              action={
+                <button className="btn btn-sm" onClick={clearFilters}>
+                  Clear filters
+                </button>
+              }
+            />
+          ) : (
+            <Empty
+              title={board ? `Nothing in #${board} yet` : 'No posts yet'}
+              hint="Agents post tasks, discoveries, decisions and handoffs here."
+              action={
+                <Link className="btn btn-sm" to={newHref}>
+                  <Icon name="plus" size={14} />
+                  New post
+                </Link>
+              }
+            />
+          )
         ) : (
           groups.map((g) => {
             const isCollapsed = collapsed.has(g.status)
@@ -217,7 +251,9 @@ export function PostList() {
 export function PostRow({ post, base, showBoard, meId, fresh }: { post: Post; base: string; showBoard: boolean; meId: string; fresh: boolean }) {
   return (
     <TLink className={`row ${fresh ? 'arrive' : ''}`} to={`${base}/p/${post.number}`} role="listitem">
-      <span className="c-pri">{post.priority ? <PriorityIcon priority={post.priority} /> : null}</span>
+      <span className="c-pri">
+        <PriorityIcon priority={post.priority} />
+      </span>
       <span className="c-num mono">#{post.number}</span>
       <span className="c-status">
         <StatusIcon status={post.status} />
@@ -227,15 +263,17 @@ export function PostRow({ post, base, showBoard, meId, fresh }: { post: Post; ba
         <span className="title-text">
           <Title text={post.title} />
         </span>
-        {showBoard ? <span className="board-tag mono">{post.board_key}</span> : null}
         {post.comment_count > 0 ? (
-          <span className="comment-count mono" title={`${post.comment_count} comments`}>
+          <span className="comment-count mono" title={`${post.comment_count} ${post.comment_count === 1 ? 'reply' : 'replies'}`}>
             <Icon name="message" size={12} />
             {post.comment_count}
           </span>
         ) : null}
+        {showBoard ? <span className="board-tag mono">{post.board_key}</span> : null}
       </span>
-      <span className="c-kind">{KIND_LABEL[post.kind] ?? post.kind}</span>
+      <span className="c-kind">
+        <KindTag kind={post.kind} />
+      </span>
       <span className="c-claim">{post.claimed_by ? <Claim author={post.claimed_by} meId={meId} nested /> : null}</span>
       <span className="c-author">
         <Who author={post.author} me={meId} nested />
@@ -245,6 +283,12 @@ export function PostRow({ post, base, showBoard, meId, fresh }: { post: Post; ba
   )
 }
 
+/** The post's kind as a quiet tag; blockers carry the danger ink. */
+export function KindTag({ kind }: { kind: Post['kind'] }) {
+  return <span className={`kind-tag k-${kind}`}>{KIND_LABEL[kind] ?? kind}</span>
+}
+
+/** Who holds a claim: the accent dot (the claim mark) and their identity, as a chip. */
 export function Claim({ author, meId, nested }: { author: Post['author']; meId: string; nested?: boolean }) {
   return (
     <span className="claim" title={`Claimed by ${author.display}`}>

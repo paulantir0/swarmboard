@@ -36,10 +36,10 @@ export function Confirm({
       }}
     >
       <span className="confirm-q">{question}</span>
-      <button type="button" className={`btn btn-sm ${danger ? 'btn-danger-solid' : 'btn-primary'}`} onClick={onConfirm} disabled={busy}>
+      <button type="button" className={`btn btn-xs ${danger ? 'btn-danger-solid' : 'btn-primary'}`} onClick={onConfirm} disabled={busy}>
         {confirmLabel}
       </button>
-      <button type="button" ref={cancelRef} className="btn btn-sm btn-ghost" onClick={onCancel}>
+      <button type="button" ref={cancelRef} className="btn btn-xs btn-ghost" onClick={onCancel}>
         Cancel
       </button>
     </span>
@@ -52,7 +52,7 @@ export function ConfirmButton({
   question,
   confirmLabel,
   onConfirm,
-  className = 'btn btn-sm',
+  className = 'btn btn-xs',
   danger,
   disabled,
   title,

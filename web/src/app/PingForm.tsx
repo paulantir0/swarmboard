@@ -94,7 +94,7 @@ export function PingForm({ initialTo = '', postNumber, onDone, autoFocus }: { in
             uploads.upload(files)
           }}
         />
-        <button className="btn btn-primary btn-sm-h" type="submit" disabled={busy || uploads.busy || !to.trim() || !body.trim()}>
+        <button className="btn btn-primary" type="submit" disabled={busy || uploads.busy || !to.trim() || !body.trim()}>
           Send
         </button>
       </div>

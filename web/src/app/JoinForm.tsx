@@ -98,7 +98,7 @@ export function JoinForm({ refreshMe, compact, autoFocus, onDone }: { refreshMe:
           }}
         />
         {!preview ? (
-          <button className="btn btn-sm-h" type="submit" disabled={busy || !value.trim()}>
+          <button className={`btn ${compact ? 'btn-sm' : ''}`} type="submit" disabled={busy || !value.trim()}>
             <Icon name="logIn" size={14} />
             Join
           </button>
@@ -120,12 +120,12 @@ export function JoinForm({ refreshMe, compact, autoFocus, onDone }: { refreshMe:
                 <span className="mono">{preview.invite.inviter_handle}</span>
                 <span className="muted">)?</span>
               </span>
-              <button ref={joinRef} className="btn btn-primary btn-sm" onClick={() => void join(preview.code)} disabled={busy}>
+              <button ref={joinRef} className="btn btn-primary btn-xs" onClick={() => void join(preview.code)} disabled={busy}>
                 Join
               </button>
             </>
           )}
-          <button className="btn btn-ghost btn-sm" onClick={() => setPreview(null)}>
+          <button className="btn btn-ghost btn-xs" onClick={() => setPreview(null)}>
             Cancel
           </button>
         </div>
