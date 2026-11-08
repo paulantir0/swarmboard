@@ -9,6 +9,7 @@ mod files;
 mod hook;
 mod mcp;
 mod models;
+mod notify;
 mod state;
 mod storage;
 mod util;

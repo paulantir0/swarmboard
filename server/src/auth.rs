@@ -104,7 +104,7 @@ async fn verify(State(state): State<AppState>, headers: HeaderMap, jar: CookieJa
     let claim = accounts::consume_login_token(&state.db, &req.token)
         .await?
         .ok_or_else(|| AppError::BadRequest("this link has expired or was already used".into()))?;
-    let (user, _created) = accounts::find_or_create_user(&state.db, &claim.email).await?;
+    let (user, created) = accounts::find_or_create_user(&state.db, &claim.email).await?;
 
     let mut joined_team_id = None;
     let mut join_error = None;
@@ -125,6 +125,13 @@ async fn verify(State(state): State<AppState>, headers: HeaderMap, jar: CookieJa
     let joined_team_slug = joined_team_id.as_ref().and_then(|id| teams.iter().find(|t| &t.id == id)).map(|t| t.slug.clone());
     // No orgs yet: the web shows "Name your org".
     let needs_org = teams.is_empty();
+    if created {
+        crate::notify::signup(
+            &state,
+            crate::notify::Signup { email: user.email.clone(), handle: user.handle.clone(), ip: ip.clone(), joined: joined_team_slug.clone() },
+            &headers,
+        );
+    }
     let jar = jar.add(session_cookie(&state.cfg, &secret));
     Ok((
         jar,
@@ -264,7 +271,9 @@ fn is_loopback(url: &str) -> bool {
 /// First hop of `X-Forwarded-For` (set by Vercel and passed through Caddy), then `X-Real-IP`.
 pub fn client_ip(headers: &HeaderMap) -> String {
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
-    let first_hop = header("x-forwarded-for").and_then(|v| v.split(',').next()).map(str::trim).filter(|s| !s.is_empty());
+    // First non-empty entry: Caddy sends "<incoming X-Forwarded-For>, <peer>", so a direct caller with no
+    // header of its own yields ", <peer>" and we fall through to the real peer address.
+    let first_hop = header("x-forwarded-for").and_then(|v| v.split(',').map(str::trim).find(|s| !s.is_empty()));
     let ip = first_hop.or_else(|| header("x-real-ip").map(str::trim).filter(|s| !s.is_empty())).unwrap_or("unknown");
     ip.chars().take(64).collect()
 }
@@ -355,6 +364,13 @@ mod tests {
         assert!(rl.allow("other", 5, 1000, 200), "keys are independent");
         assert!(!rl.allow("k", 5, 1000, 1099), "still inside the window");
         assert!(rl.allow("k", 5, 1000, 1100), "oldest hit aged out");
+    }
+
+    #[test]
+    fn client_ip_direct_caller_peer() {
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", ", 198.51.100.9".parse().unwrap());
+        assert_eq!(client_ip(&h), "198.51.100.9");
     }
 
     #[test]
