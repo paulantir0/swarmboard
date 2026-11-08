@@ -791,6 +791,33 @@ pub async fn invite_info(db: &SqlitePool, code: &str) -> AppResult<Option<Invite
     }))
 }
 
+/// Before emailing an invite to `email` (normalized): Conflict if that address already belongs
+/// to a member or the team is full.
+pub async fn check_email_invite(db: &SqlitePool, team_id: &str, email: &str) -> AppResult<()> {
+    let (member_count, already): (i64, bool) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(MAX(u.email = ?2), 0) \
+         FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.team_id = ?1",
+    )
+    .bind(team_id)
+    .bind(email)
+    .fetch_one(db)
+    .await?;
+    if already {
+        return Err(AppError::Conflict("already a member".into()));
+    }
+    if member_count >= MAX_TEAM_MEMBERS {
+        return Err(AppError::Conflict(format!("this team is full ({MAX_TEAM_MEMBERS} people)")));
+    }
+    Ok(())
+}
+
+/// Records `invite_sent` with only the invitee's email domain, never the full address.
+pub async fn record_invite_sent(db: &SqlitePool, team_id: &str, actor: &User, email: &str) -> AppResult<()> {
+    let domain = email.rsplit_once('@').map(|(_, d)| d).unwrap_or("");
+    let data = serde_json::json!({ "by": actor.handle, "by_id": actor.id, "email_domain": domain });
+    insert_event(db, team_id, &actor.id, "invite_sent", data).await
+}
+
 /// Joins `user_id` to the invite's team. Idempotent for existing members.
 /// NotFound for unknown/revoked codes, Conflict when the team already has 5 humans.
 /// The cap check and insert happen under SQLite's write lock, so concurrent joins can't overshoot.
