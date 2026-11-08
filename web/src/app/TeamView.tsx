@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import { api, type Member } from '../api'
+import { Confirm, ConfirmButton } from '../components/Confirm'
 import { CopyButton } from '../components/CopyButton'
 import { Icon } from '../components/Icon'
 import { Loadable } from '../components/Loader'
@@ -21,6 +22,7 @@ export function TeamView() {
   const [error, setError] = useState('')
   const [saved, setSaved] = useState('')
   const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<{ uid: string; kind: 'remove' | 'transfer' } | null>(null)
 
   const team = detail.data?.team
   const members = detail.data?.members ?? []
@@ -74,36 +76,33 @@ export function TeamView() {
     }, 'handle')
   }
 
-  const remove = (m: Member) => {
-    if (!window.confirm(`Remove ${m.handle} from ${team?.name}?`)) return
-    void run(() => api.removeMember(teamId, m.user_id))
-  }
+  const remove = (m: Member) => run(() => api.removeMember(teamId, m.user_id))
 
-  const leave = () => {
-    if (!window.confirm(`Leave ${team?.name}? You'll need a new invite to come back.`)) return
-    void run(async () => {
+  const leave = () =>
+    run(async () => {
       await api.removeMember(teamId, me.user.id)
       await refreshMe()
       navigate('/app', { replace: true })
     })
-  }
 
   const setRole = (m: Member, role: 'admin' | 'member') =>
     void run(async () => {
       await api.setRole(teamId, m.user_id, role)
     })
 
-  const transfer = (m: Member) => {
-    if (!window.confirm(`Transfer ownership of ${team?.name} to ${m.handle}? You'll become an admin.`)) return
-    void run(async () => {
+  const transfer = (m: Member) =>
+    run(async () => {
       await api.transferOwnership(teamId, m.user_id)
       await refreshMe()
     })
-  }
 
-  const rotate = () => {
-    if (!window.confirm('Rotate the invite link? The current link stops working.')) return
-    void run(() => api.rotateInvite(teamId))
+  const rotate = () => run(() => api.rotateInvite(teamId))
+
+  const confirmPending = async (m: Member) => {
+    const kind = pending?.kind
+    setPending(null)
+    if (kind === 'remove') await remove(m)
+    else if (kind === 'transfer') await transfer(m)
   }
 
   return (
@@ -141,8 +140,9 @@ export function TeamView() {
                     const self = m.user_id === me.user.id
                     const ownerMenu = isOwner && !self
                     const adminRemove = myRole === 'admin' && !self && m.role === 'member'
+                    const asking = pending?.uid === m.user_id ? pending.kind : null
                     return (
-                      <li key={m.user_id} className="member-row">
+                      <li key={m.user_id} className={`member-row ${asking ? 'asking' : ''}`}>
                         <span className="member-handle mono">{m.handle}</span>
                         <span className="member-email muted">{m.email}</span>
                         <span className="member-role">
@@ -151,7 +151,17 @@ export function TeamView() {
                         </span>
                         <span className="member-joined muted mono">{shortDate(m.joined_at)}</span>
                         <span className="member-act">
-                          {ownerMenu ? (
+                          {asking ? (
+                            <Confirm
+                              className="member-confirm"
+                              question={asking === 'remove' ? `Remove ${m.handle}?` : `Make ${m.handle} the owner? You become an admin.`}
+                              confirmLabel={asking === 'remove' ? 'Remove' : 'Transfer'}
+                              danger
+                              busy={busy}
+                              onConfirm={() => void confirmPending(m)}
+                              onCancel={() => setPending(null)}
+                            />
+                          ) : ownerMenu ? (
                             <RowMenu
                               label={`Manage ${m.handle}`}
                               disabled={busy}
@@ -159,12 +169,12 @@ export function TeamView() {
                                 m.role === 'admin'
                                   ? { label: 'Remove admin', onSelect: () => setRole(m, 'member') }
                                   : { label: 'Make admin', onSelect: () => setRole(m, 'admin') },
-                                { label: 'Transfer ownership', onSelect: () => transfer(m) },
-                                { label: 'Remove', danger: true, onSelect: () => remove(m) },
+                                { label: 'Transfer ownership', onSelect: () => setPending({ uid: m.user_id, kind: 'transfer' }) },
+                                { label: 'Remove', danger: true, onSelect: () => setPending({ uid: m.user_id, kind: 'remove' }) },
                               ]}
                             />
                           ) : adminRemove ? (
-                            <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => remove(m)}>
+                            <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => setPending({ uid: m.user_id, kind: 'remove' })}>
                               Remove
                             </button>
                           ) : null}
@@ -184,10 +194,17 @@ export function TeamView() {
                     <input className="field mono invite-url" readOnly value={detail.data.invite.url} aria-label="Invite link" onFocus={(e) => e.target.select()} />
                     <CopyButton text={detail.data.invite.url} className="btn-sm-h" />
                     {canManage ? (
-                      <button className="btn btn-sm-h" onClick={rotate} disabled={busy} title="Rotate">
+                      <ConfirmButton
+                        className="btn btn-sm-h"
+                        disabled={busy}
+                        title="Rotate"
+                        question="New link? The old one stops working."
+                        confirmLabel="Rotate"
+                        onConfirm={rotate}
+                      >
                         <Icon name="refresh" size={14} />
                         <span className="hide-sm">Rotate</span>
-                      </button>
+                      </ConfirmButton>
                     ) : null}
                   </div>
                 ) : canManage ? (
@@ -222,10 +239,10 @@ export function TeamView() {
 
               {!isOwner ? (
                 <section className="block">
-                  <button className="btn btn-danger" onClick={leave} disabled={busy}>
+                  <ConfirmButton className="btn btn-danger" disabled={busy} question={`Leave ${team.name}?`} confirmLabel="Leave" danger onConfirm={leave}>
                     <Icon name="logOut" size={14} />
                     Leave board
-                  </button>
+                  </ConfirmButton>
                 </section>
               ) : null}
 

@@ -75,13 +75,11 @@ export function Markdown({ source, className }: { source: string; className?: st
 
 function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null)
+  // No close() on cleanup: it fires `close` (→ onClose) asynchronously, which under StrictMode's
+  // mount/unmount/mount closes the box we just opened. Unmounting removes the modal anyway.
   useEffect(() => {
     const d = ref.current
-    if (!d) return
-    if (!d.open) d.showModal()
-    return () => {
-      if (d.open) d.close()
-    }
+    if (d && !d.open) d.showModal()
   }, [])
   return (
     <dialog

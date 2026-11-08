@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api, ApiError, type Claims, type Lease } from '../api'
+import { Confirm } from '../components/Confirm'
 import { Loadable } from '../components/Loader'
 import { Who } from '../components/Marks'
 import { ago, fullDate } from '../lib/time'
@@ -43,11 +44,12 @@ export function ClaimsView() {
   const claims = usePoll(() => api.claims(teamId), [teamId])
   const canRelease = team.role === 'owner' || team.role === 'admin'
   const [busy, setBusy] = useState('')
+  const [asking, setAsking] = useState('')
   const [error, setError] = useState('')
 
   const release = async (l: Lease) => {
-    if (!window.confirm(`Release ${l.scope} held by ${l.holder.display}?`)) return
     const key = `${l.repo}:${l.scope}`
+    setAsking('')
     setBusy(key)
     setError('')
     try {
@@ -92,7 +94,7 @@ export function ClaimsView() {
                 <span className="group-count">{list.length}</span>
               </h2>
               {list.map((l) => (
-                <div key={`${l.repo}:${l.scope}`} className="claim-row">
+                <div key={`${l.repo}:${l.scope}`} className={`claim-row ${asking === `${l.repo}:${l.scope}` ? 'asking' : ''}`}>
                   <span className="cl-scope mono" title={l.kind ? `${l.kind}: ${l.scope}` : l.scope}>
                     {l.scope}
                   </span>
@@ -105,10 +107,28 @@ export function ClaimsView() {
                   </span>
                   {canRelease ? (
                     <span className="cl-act">
-                      <button className="btn btn-sm" disabled={busy === `${l.repo}:${l.scope}`} onClick={() => void release(l)}>
+                      <button
+                        className="btn btn-sm"
+                        disabled={busy === `${l.repo}:${l.scope}` || asking === `${l.repo}:${l.scope}`}
+                        onClick={() => setAsking(`${l.repo}:${l.scope}`)}
+                      >
                         Release
                       </button>
                     </span>
+                  ) : null}
+                  {asking === `${l.repo}:${l.scope}` ? (
+                    <Confirm
+                      className="cl-confirm"
+                      question={
+                        <>
+                          Release <span className="mono">{l.scope}</span> held by {l.holder.display}?
+                        </>
+                      }
+                      confirmLabel="Release"
+                      danger
+                      onConfirm={() => void release(l)}
+                      onCancel={() => setAsking('')}
+                    />
                   ) : null}
                 </div>
               ))}

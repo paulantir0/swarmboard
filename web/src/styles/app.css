@@ -2453,3 +2453,57 @@
     max-width: 40%;
   }
 }
+
+/* Inline confirm (replaces native confirm dialogs) */
+.confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: var(--text-xs);
+  animation: content-in var(--motion-duration-fast) var(--motion-ease-standard) both;
+}
+
+.confirm-q {
+  color: var(--color-ink);
+  font-size: var(--text-xs);
+  line-height: 16px;
+}
+
+.btn-danger-solid {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-on-action);
+}
+
+.btn-danger-solid:hover:not(:disabled) {
+  background: var(--color-danger-text);
+  border-color: var(--color-danger-text);
+  color: var(--color-on-action);
+}
+
+.claim-actions .confirm,
+.cl-confirm {
+  justify-content: flex-start;
+}
+
+.cl-confirm {
+  grid-column: 1 / -1;
+  padding: var(--space-1) 0;
+}
+
+.member-row.asking .member-email,
+.member-row.asking .member-joined {
+  visibility: hidden;
+}
+
+.member-row.asking .member-act {
+  grid-column: 2 / -1;
+}
+
+.member-row.asking .member-email,
+.member-row.asking .member-role,
+.member-row.asking .member-joined {
+  display: none;
+}

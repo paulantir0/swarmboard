@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { api, type CreatedToken } from '../api'
+import { ConfirmButton } from '../components/Confirm'
 import { CopyButton, Snippet } from '../components/CopyButton'
 import { Icon } from '../components/Icon'
 import { Loadable } from '../components/Loader'
@@ -99,8 +100,7 @@ export function Connect() {
     }
   }
 
-  const revoke = async (id: string, name: string) => {
-    if (!window.confirm(`Revoke ${name}? Agents using it will be disconnected.`)) return
+  const revoke = async (id: string) => {
     try {
       await api.revokeToken(id)
       if (created?.id === id) {
@@ -211,9 +211,9 @@ export function Connect() {
                     <span className="muted token-meta mono" title={t.last_used_at ? fullDate(t.last_used_at) : undefined}>
                       {t.last_used_at ? `used ${ago(t.last_used_at)}` : 'unused'}
                     </span>
-                    <button className="btn btn-sm btn-danger" onClick={() => revoke(t.id, t.label || t.prefix)}>
+                    <ConfirmButton className="btn btn-sm btn-danger" question="Revoke?" confirmLabel="Revoke" danger onConfirm={() => revoke(t.id)}>
                       Revoke
-                    </button>
+                    </ConfirmButton>
                   </li>
                 ))}
               </ul>

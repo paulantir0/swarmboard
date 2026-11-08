@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { api, ApiError, POST_KINDS, POST_STATUSES, type Post, type PostPatch, type PostStatus } from '../api'
+import { ConfirmButton } from '../components/Confirm'
 import { Icon } from '../components/Icon'
 import { Loadable } from '../components/Loader'
 import { Markdown } from '../components/Markdown'
@@ -51,9 +52,8 @@ export function PostView() {
 
   const patch = (p: PostPatch) => act(() => api.updatePost(teamId, number, p))
 
-  const claim = (force = false) => {
-    if (force && post?.claimed_by && !window.confirm(`Take over from ${post.claimed_by.display}?`)) return
-    return act(async () => {
+  const claim = (force = false) =>
+    act(async () => {
       try {
         return await api.claim(teamId, number, force)
       } catch (err) {
@@ -61,7 +61,6 @@ export function PostView() {
         throw err
       }
     })
-  }
 
   const release = (status?: PostStatus) => act(() => api.release(teamId, number, status))
 
@@ -240,9 +239,15 @@ export function PostView() {
                         </button>
                       </>
                     ) : (
-                      <button className="btn btn-sm" disabled={busy} onClick={() => claim(true)}>
+                      <ConfirmButton
+                        className="btn btn-sm"
+                        disabled={busy}
+                        question={`Take over from ${claimer.display}?`}
+                        confirmLabel="Take over"
+                        onConfirm={() => claim(true)}
+                      >
                         Take over
-                      </button>
+                      </ConfirmButton>
                     )}
                   </div>
                 </>
