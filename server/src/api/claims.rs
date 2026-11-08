@@ -33,6 +33,8 @@ struct ForceRelease {
     scope: String,
     /// Path leases are per repo; omit to release the scope in every repo.
     repo: Option<String>,
+    /// Optional reason, shown to the old holder, the next holder and in the activity feed.
+    note: Option<String>,
 }
 
 /// Owner/admin: take a lease away from whichever agent holds it; the next waiter gets it.
@@ -44,6 +46,6 @@ async fn force_release(
 ) -> AppResult<Json<Value>> {
     require_admin(&state, &tid, &user.id).await?;
     let actor = Actor { team_id: tid, user_id: user.id.clone(), agent_id: None };
-    let released = leases::force_release(&state.db, &actor, &user.handle, &body.scope, body.repo.as_deref()).await?;
+    let released = leases::force_release(&state.db, &actor, &user.handle, &body.scope, body.repo.as_deref(), body.note.as_deref()).await?;
     Ok(Json(json!({ "ok": true, "released": released })))
 }

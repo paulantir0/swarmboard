@@ -5,6 +5,24 @@ use crate::{
     models::{Agent, Board, Comment, Ping, Post},
 };
 
+/// `Released ci ("tests green"); granted to bob/ui.` (scope named per grant when several were released).
+pub fn released_line(released: &[String], note: &str, granted: &[(String, String)]) -> String {
+    let mut s = format!("Released {}", released.join(", "));
+    if !note.is_empty() {
+        s.push_str(&format!(" (\"{}\")", truncate_chars(note, 100)));
+    }
+    if !granted.is_empty() {
+        let to: Vec<String> = if released.len() == 1 {
+            granted.iter().map(|(_, who)| format!("to {who}")).collect()
+        } else {
+            granted.iter().map(|(scope, who)| format!("{scope} to {who}")).collect()
+        };
+        s.push_str(&format!("; granted {}", to.join(", ")));
+    }
+    s.push('.');
+    s
+}
+
 /// "in 28m", "in 40s", "now".
 pub fn until(t: i64, now: i64) -> String {
     let s = (t - now) / 1000;
@@ -170,4 +188,20 @@ pub fn pings_block(pings: &[Ping], me_display: Option<&str>, now: i64) -> String
 /// Humans render as `@handle`, agents as `handle/agent`.
 pub fn recipient_label(display: &str) -> String {
     if display.contains('/') { display.to_string() } else { format!("@{display}") }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn released_line_echoes_note_and_grants() {
+        let ci = vec!["ci".to_string()];
+        let grant = vec![("ci".to_string(), "bob/ui".to_string())];
+        assert_eq!(released_line(&ci, "tests green", &grant), r#"Released ci ("tests green"); granted to bob/ui."#);
+        assert_eq!(released_line(&ci, "tests green", &[]), r#"Released ci ("tests green")."#);
+        assert_eq!(released_line(&ci, "", &[]), "Released ci.");
+        let two = vec!["ci".to_string(), "web/**".to_string()];
+        assert_eq!(released_line(&two, "", &grant), "Released ci, web/**; granted ci to bob/ui.");
+    }
 }

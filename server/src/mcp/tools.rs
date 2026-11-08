@@ -120,13 +120,14 @@ pub fn definitions() -> Value {
         tool(
             "release",
             "Release lease",
-            "Release a lease when done (also leaves its queue); the next waiter gets it. all:true releases everything. \
-             For a task scope \"#12\", status sets the post status (e.g. \"done\") and note is posted as a reply.",
+            "Release a lease when done (also leaves its queue); the next waiter gets it along with your note. all:true \
+             releases everything. For a task scope \"#12\", status sets the post status (e.g. \"done\") and note is also \
+             posted as a reply.",
             json!({
                 "scope": { "type": "string", "description": "Scope exactly as claimed." },
                 "all": { "type": "boolean", "description": "Release all your leases and queue spots." },
                 "status": { "type": "string", "enum": STATUSES, "description": "For \"#n\": post status after release (default open)." },
-                "note": { "type": "string", "description": "For \"#n\": result summary posted as a reply." }
+                "note": { "type": "string", "description": "Short outcome (\"tests green\"), shown to the next holder and in the feed; for \"#n\" also posted as a reply." }
             }),
             &[],
             false,
@@ -537,7 +538,7 @@ async fn run(ctx: &mut ToolCtx<'_>, name: &str, args: &Value, agent: Option<&Age
             let o = leases::release(db, &actor, scope.as_deref(), all, status.as_deref(), note.as_deref()).await.map_err(err_text)?;
             let mut lines = Vec::new();
             if !o.released.is_empty() {
-                lines.push(format!("Released {}.", o.released.join(", ")));
+                lines.push(format::released_line(&o.released, &o.note, &o.granted));
             }
             if !o.left_queue.is_empty() {
                 lines.push(format!("Left the queue for {}.", o.left_queue.join(", ")));

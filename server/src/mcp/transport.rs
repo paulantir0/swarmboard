@@ -426,11 +426,11 @@ mod tests {
         assert!(piggy.contains("1 new ping") && piggy.contains("paul/probe-2 → you (#1"), "{piggy}");
 
         // Release ci → s2 granted + pinged; release #1 as done with a note.
-        let v = t.call(&s1, "release", json!({"scope":"ci"})).await;
-        assert_eq!(text(&v, 0), "Released ci.");
+        let v = t.call(&s1, "release", json!({"scope":"ci","note":"tests green"})).await;
+        assert_eq!(text(&v, 0), "Released ci (\"tests green\"); granted to paul/probe-2.");
         let v = t.call(&s2, "claims", json!({})).await;
         assert!(text(&v, 0).contains("ci — paul/probe-2 (you)"), "{}", text(&v, 0));
-        assert!(text(&v, 1).contains("you now hold ci"), "{}", text(&v, 1));
+        assert!(text(&v, 1).contains("you now hold ci (you were queued). paul/probe released it: \"tests green\"."), "{}", text(&v, 1));
         let v = t.call(&s1, "release", json!({"scope":"#1","status":"done","note":"fixed in abc"})).await;
         assert!(text(&v, 0).contains("#1 [done]"), "{}", text(&v, 0));
         let v = t.call(&s2, "reply", json!({"number":1,"body":"thanks"})).await;
