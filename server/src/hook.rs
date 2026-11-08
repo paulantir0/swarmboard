@@ -119,7 +119,6 @@ pub async fn respond_with(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use super::*;
     use crate::{
@@ -130,7 +129,7 @@ mod tests {
     #[tokio::test]
     async fn hook_outputs_per_event() {
         let f = fixture().await;
-        let state = AppState { db: f.db.clone(), cfg: Arc::new(Config::from_env()), http: reqwest::Client::new() };
+        let state = AppState::new(f.db.clone(), Config::from_env()).unwrap();
         let auth = TokenAuth { token_id: "tok".into(), user_id: f.paul.clone(), team_id: f.team.clone(), handle: "paul".into() };
 
         let start = respond_with(&state, &auth, "SessionStart", "abc-123", None).await.unwrap();

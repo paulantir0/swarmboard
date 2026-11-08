@@ -293,7 +293,6 @@ static LIMITER: LazyLock<RateLimiter> = LazyLock::new(RateLimiter::new);
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use axum::{
         body::Body,
@@ -314,11 +313,12 @@ mod tests {
             resend_api_key: None,
             email_from: "swarmboard <login@swarmboard.app>".into(),
             cookie_secure: false,
+            s3: None,
         }
     }
 
     async fn test_state() -> AppState {
-        AppState { db: test_pool().await, cfg: Arc::new(test_cfg()), http: reqwest::Client::new() }
+        AppState::new(test_pool().await, test_cfg()).unwrap()
     }
 
     fn post_json(uri: &str, body: Value) -> Request<Body> {

@@ -237,7 +237,6 @@ async fn handle_message(state: &AppState, auth: &TokenAuth, session: &mut collab
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use axum::{
         body::{to_bytes, Body},
@@ -270,7 +269,8 @@ mod tests {
         let mut cfg = Config::from_env();
         cfg.data_dir = dir.clone();
         cfg.public_api_url = "http://api.test".into();
-        let state = AppState { db, cfg: Arc::new(cfg), http: reqwest::Client::new() };
+        cfg.s3 = None;
+        let state = AppState::new(db, cfg).unwrap();
         T { app: crate::app(state), token: tok.token, dir }
     }
 

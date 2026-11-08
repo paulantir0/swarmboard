@@ -10,9 +10,9 @@ mod hook;
 mod mcp;
 mod models;
 mod state;
+mod storage;
 mod util;
 
-use std::sync::Arc;
 
 use axum::{routing::get, Router};
 use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
@@ -46,7 +46,10 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = Config::from_env();
     let db = db::connect(&cfg).await?;
-    let state = AppState { db, cfg: Arc::new(cfg.clone()), http: reqwest::Client::new() };
+    let state = AppState::new(db, cfg.clone())?;
+    if state.storage.is_s3() {
+        tracing::info!(bucket = ?cfg.s3.as_ref().map(|s| &s.bucket), "file uploads go to S3");
+    }
 
     let listener = tokio::net::TcpListener::bind(&cfg.bind).await?;
     tracing::info!(bind = %cfg.bind, web = %cfg.web_url, api = %cfg.public_api_url, "swarmboard listening");

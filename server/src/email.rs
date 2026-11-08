@@ -295,7 +295,6 @@ fn no_autolink(escaped: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use axum::{
         Json, Router,
@@ -382,7 +381,7 @@ mod tests {
     async fn without_key_logs_and_succeeds() {
         let mut cfg = Config::from_env();
         cfg.resend_api_key = None;
-        let state = AppState { db: crate::db::test_pool().await, cfg: Arc::new(cfg), http: reqwest::Client::new() };
+        let state = AppState::new(crate::db::test_pool().await, cfg).unwrap();
         send_magic_link(&state, "paul@example.com", LINK, MagicLinkPurpose::SignIn).await.unwrap();
     }
 

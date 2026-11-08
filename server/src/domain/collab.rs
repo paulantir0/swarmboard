@@ -22,10 +22,6 @@ use crate::{
 
 /// Max stored file size.
 pub const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
-/// Max total bytes stored per team.
-pub const TEAM_STORAGE_BYTES: i64 = 200 * 1024 * 1024;
-/// Server-wide safety valve: max total bytes stored across all teams.
-pub const GLOBAL_STORAGE_BYTES: i64 = 5 * 1024 * 1024 * 1024;
 /// Uploads allowed per user per window.
 const UPLOAD_LIMIT: usize = 60;
 const UPLOAD_WINDOW_MS: i64 = 15 * 60 * 1000;
@@ -1962,7 +1958,7 @@ pub fn normalize_content_type(given: Option<&str>, filename: &str) -> String {
     }
 }
 
-/// Stores bytes at `<data_dir>/files/<id>`; max 10 MB (BadRequest beyond). Returns absolute URL.
+/// Stores bytes via `state.storage` (disk or S3) under a random id; max 10 MB (BadRequest beyond). Returns absolute URL.
 pub async fn save_file(state: &AppState, actor: &Actor, filename: &str, content_type: Option<&str>, bytes: &[u8]) -> AppResult<FileInfo> {
     if bytes.is_empty() {
         return Err(bad("file is empty"));
@@ -1971,13 +1967,11 @@ pub async fn save_file(state: &AppState, actor: &Actor, filename: &str, content_
         return Err(bad(format!("file is {:.1} MB; max is 10 MB", bytes.len() as f64 / 1_048_576.0)));
     }
     check_upload_rate(&UPLOAD_LIMITER, &actor.user_id, now_ms())?;
-    check_storage_quota(&state.db, &actor.team_id, bytes.len() as i64).await?;
+    check_storage_quota(&state.db, &actor.team_id, bytes.len() as i64, state.storage.limits()).await?;
     let filename = sanitize_filename(filename);
     let content_type = normalize_content_type(content_type, &filename);
     let id = random_token(24);
-    let dir = state.cfg.data_dir.join("files");
-    tokio::fs::create_dir_all(&dir).await.map_err(|e| AppError::Internal(e.into()))?;
-    tokio::fs::write(dir.join(&id), bytes).await.map_err(|e| AppError::Internal(e.into()))?;
+    state.storage.put(&id, &content_type, bytes).await.map_err(AppError::Internal)?;
     sqlx::query(
         "INSERT INTO files (id, team_id, uploader_user_id, uploader_agent_id, filename, content_type, size, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -2013,14 +2007,16 @@ fn check_upload_rate(limiter: &RateLimiter, user_id: &str, now: i64) -> AppResul
 }
 
 /// Rejects an upload of `new_bytes` that would push the team (or the whole server) over its storage cap.
-async fn check_storage_quota(db: &SqlitePool, team_id: &str, new_bytes: i64) -> AppResult<()> {
+/// `limits` is (per-team, server-wide) bytes, from `Storage::limits`.
+async fn check_storage_quota(db: &SqlitePool, team_id: &str, new_bytes: i64, limits: (i64, i64)) -> AppResult<()> {
+    let (team_cap, global_cap) = limits;
     let (team_used,): (i64,) =
         sqlx::query_as("SELECT COALESCE(SUM(size), 0) FROM files WHERE team_id = ?1").bind(team_id).fetch_one(db).await?;
-    if team_used + new_bytes > TEAM_STORAGE_BYTES {
-        return Err(bad("team storage limit (200 MB) reached"));
+    if team_used + new_bytes > team_cap {
+        return Err(bad(format!("team storage limit ({}) reached", crate::storage::cap_label(team_cap))));
     }
     let (total_used,): (i64,) = sqlx::query_as("SELECT COALESCE(SUM(size), 0) FROM files").fetch_one(db).await?;
-    if total_used + new_bytes > GLOBAL_STORAGE_BYTES {
+    if total_used + new_bytes > global_cap {
         return Err(bad("server storage is full; uploads are temporarily disabled"));
     }
     Ok(())
@@ -2615,19 +2611,27 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn storage_quota() {
+        use crate::storage::{DISK_LIMITS, S3_LIMITS};
+        let (team_cap, global_cap) = DISK_LIMITS;
         let f = fixture().await;
         let other = add_team(&f.db, &f.paul).await;
         let third = add_team(&f.db, &f.paul).await;
-        check_storage_quota(&f.db, &f.team, 10).await.unwrap();
-        insert_file(&f.db, &f.team, &f.paul, TEAM_STORAGE_BYTES - 10).await;
-        check_storage_quota(&f.db, &f.team, 10).await.expect("exactly at the cap is fine");
-        let err = check_storage_quota(&f.db, &f.team, 11).await.unwrap_err();
+        check_storage_quota(&f.db, &f.team, 10, DISK_LIMITS).await.unwrap();
+        insert_file(&f.db, &f.team, &f.paul, team_cap - 10).await;
+        check_storage_quota(&f.db, &f.team, 10, DISK_LIMITS).await.expect("exactly at the cap is fine");
+        let err = check_storage_quota(&f.db, &f.team, 11, DISK_LIMITS).await.unwrap_err();
         assert!(matches!(&err, AppError::BadRequest(m) if m == "team storage limit (200 MB) reached"), "{err}");
+        // S3 mode has a 1 GB team cap.
+        check_storage_quota(&f.db, &f.team, 11, S3_LIMITS).await.expect("S3 team cap is higher");
         // Other teams are unaffected until the global cap is hit.
-        check_storage_quota(&f.db, &other, MAX_FILE_BYTES as i64).await.unwrap();
-        insert_file(&f.db, &other, &f.paul, GLOBAL_STORAGE_BYTES - TEAM_STORAGE_BYTES + 10).await;
-        let err = check_storage_quota(&f.db, &third, 1).await.unwrap_err();
+        check_storage_quota(&f.db, &other, MAX_FILE_BYTES as i64, DISK_LIMITS).await.unwrap();
+        insert_file(&f.db, &other, &f.paul, global_cap - team_cap + 10).await;
+        let err = check_storage_quota(&f.db, &third, 1, DISK_LIMITS).await.unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)), "global cap applies");
+        check_storage_quota(&f.db, &third, 1, S3_LIMITS).await.expect("S3 global cap is higher");
+        insert_file(&f.db, &third, &f.paul, S3_LIMITS.0).await;
+        let err = check_storage_quota(&f.db, &third, 1, S3_LIMITS).await.unwrap_err();
+        assert!(matches!(&err, AppError::BadRequest(m) if m == "team storage limit (1 GB) reached"), "{err}");
     }
 
     #[test]

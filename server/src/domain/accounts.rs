@@ -919,6 +919,7 @@ mod tests {
             resend_api_key: None,
             email_from: "x <x@example.com>".into(),
             cookie_secure: false,
+            s3: None,
         };
         let db = crate::db::connect(&cfg).await.unwrap();
         let owner = signup(&db, "owner@example.com").await;

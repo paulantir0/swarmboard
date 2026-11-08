@@ -7,7 +7,7 @@ use std::{
 };
 
 use axum::{
-    body::Bytes,
+    body::{Body, Bytes},
     extract::{Path, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
@@ -49,11 +49,11 @@ const INLINE_TYPES: &[&str] = &[
 ];
 
 /// Response with the safe headers for user-uploaded content.
-pub fn file_response(filename: &str, content_type: &str, bytes: Vec<u8>) -> Response {
+pub fn file_response(filename: &str, content_type: &str, body: impl Into<Body>) -> Response {
     let essence = content_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
     let inline = INLINE_TYPES.contains(&essence.as_str());
     let ct = if essence == "text/plain" { "text/plain; charset=utf-8".to_string() } else { content_type.to_string() };
-    let mut resp = bytes.into_response();
+    let mut resp = Response::new(body.into());
     let h = resp.headers_mut();
     h.insert(
         header::CONTENT_TYPE,
@@ -88,11 +88,21 @@ async fn serve_file(State(state): State<AppState>, Path((id, _filename)): Path<(
         Ok(None) => return not_found(),
         Err(e) => return e.into_response(),
     };
-    match tokio::fs::read(state.cfg.data_dir.join("files").join(&id)).await {
-        Ok(bytes) => file_response(&filename, &content_type, bytes),
-        Err(e) => {
-            tracing::warn!(%id, error = %e, "file row without data");
+    match state.storage.get(&id).await {
+        Ok(Some(obj)) => {
+            let mut resp = file_response(&filename, &content_type, obj.body);
+            if let Some(n) = obj.size {
+                resp.headers_mut().insert(header::CONTENT_LENGTH, HeaderValue::from(n));
+            }
+            resp
+        }
+        Ok(None) => {
+            tracing::warn!(%id, "file row without data");
             not_found()
+        }
+        Err(e) => {
+            tracing::error!(%id, error = %e, "file storage read failed");
+            AppError::Internal(e).into_response()
         }
     }
 }

@@ -23,6 +23,29 @@ pub struct Config {
     pub email_from: String,
     /// Set the `Secure` attribute on cookies. false for http://localhost dev.
     pub cookie_secure: bool,
+    /// Store uploads in S3 instead of `<data_dir>/files` when `S3_BUCKET` is set.
+    pub s3: Option<S3Config>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct S3Config {
+    pub bucket: String,
+    /// Default `eu-central-1`.
+    pub region: String,
+    /// Prepended to the file id to form the object key. Default `files/`.
+    pub prefix: String,
+}
+
+impl S3Config {
+    /// `None` unless `S3_BUCKET` is non-empty. `var` returns `None` for unset variables.
+    pub fn parse(var: impl Fn(&str) -> Option<String>) -> Option<Self> {
+        let get = |k: &str| var(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        Some(S3Config {
+            bucket: get("S3_BUCKET")?,
+            region: get("S3_REGION").unwrap_or_else(|| "eu-central-1".into()),
+            prefix: var("S3_PREFIX").unwrap_or_else(|| "files/".into()),
+        })
+    }
 }
 
 impl Config {
@@ -38,10 +61,30 @@ impl Config {
             resend_api_key: env::var("RESEND_API_KEY").ok().filter(|v| !v.is_empty()),
             email_from: get("EMAIL_FROM", "swarmboard <login@swarmboard.app>"),
             cookie_secure: get("COOKIE_SECURE", "false") == "true",
+            s3: S3Config::parse(|k| env::var(k).ok()),
         }
     }
 
     pub fn mcp_url(&self) -> String {
         format!("{}/mcp", self.public_api_url)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(pairs: &[(&str, &str)]) -> Option<S3Config> {
+        S3Config::parse(|k| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string()))
+    }
+
+    #[test]
+    fn s3_config() {
+        assert_eq!(parse(&[]), None);
+        assert_eq!(parse(&[("S3_BUCKET", " "), ("S3_REGION", "us-east-1")]), None);
+        let c = parse(&[("S3_BUCKET", "sb-files")]).unwrap();
+        assert_eq!(c, S3Config { bucket: "sb-files".into(), region: "eu-central-1".into(), prefix: "files/".into() });
+        let c = parse(&[("S3_BUCKET", "b"), ("S3_REGION", "us-west-2"), ("S3_PREFIX", "")]).unwrap();
+        assert_eq!((c.region.as_str(), c.prefix.as_str()), ("us-west-2", ""));
     }
 }
