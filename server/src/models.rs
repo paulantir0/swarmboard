@@ -207,6 +207,8 @@ pub struct SetupSnippets {
     pub claude_hooks: String,
     /// Short paragraph to paste into CLAUDE.md / AGENTS.md.
     pub agents_md: String,
+    /// One prompt to paste into Claude Code or Codex: the agent installs everything above itself.
+    pub agent_prompt: String,
 }
 
 /// An exclusive, auto-renewing lease on a path/glob, shared resource or task.

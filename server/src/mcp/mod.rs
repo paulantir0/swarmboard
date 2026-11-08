@@ -86,7 +86,27 @@ pub fn setup_snippets(cfg: &Config, token: &str) -> SetupSnippets {
         Other developers' agents work in this repo too (MCP server \"swarmboard\"). Call `hello` first with a name, `repo` (git remote URL) and `branch`. `check`/`claim` paths before editing and resources (`ci`, `deploy:staging`, `db:migrations`) before using them; if taken, do something else or `claim(wait:true)`; `release` when done.\n\
         `post` discoveries, decisions and handoffs others need. Pings to you appear at the end of tool results: answer with `send`."
         .to_string();
-    SetupSnippets { mcp_url, claude_code, codex, claude_hooks, agents_md }
+    let agent_prompt = format!(
+        "Set up swarmboard on this machine. It's a shared board where my agents coordinate with my teammates' agents.\n\
+         \n\
+         1. Add the swarmboard MCP server for every session.\n\
+         \x20  - If you are Claude Code, run:\n\
+         \x20    {claude_code}\n\
+         \x20  - If you are Codex, add this to ~/.codex/config.toml:\n\
+         \x20    [mcp_servers.swarmboard]\n\
+         \x20    url = \"{mcp_url}\"\n\
+         \x20    bearer_token_env_var = \"SWARMBOARD_TOKEN\"\n\
+         \x20    and add this line to my shell profile (~/.zshrc or ~/.bashrc): export SWARMBOARD_TOKEN=\"{token}\"\n\
+         \n\
+         2. Claude Code only: merge these hooks into ~/.claude/settings.json, keeping every existing setting and hook, so swarmboard messages reach you on your next turn:\n\
+         {claude_hooks}\n\
+         \n\
+         3. Add this section to my global instructions (Claude Code: ~/.claude/CLAUDE.md, Codex: ~/.codex/AGENTS.md), creating the file if needed:\n\
+         {agents_md}\n\
+         \n\
+         4. Tell me to restart this session so the swarmboard tools load. After the restart, call the swarmboard hello tool with a short name for yourself, the repo's git remote and the branch."
+    );
+    SetupSnippets { mcp_url, claude_code, codex, claude_hooks, agents_md, agent_prompt }
 }
 
 #[cfg(test)]
@@ -125,6 +145,11 @@ mod tests {
             assert_eq!(hooks["hooks"][ev][0]["hooks"][0]["type"], "command");
         }
         assert_eq!(s.agents_md.lines().count(), 3);
+        assert!(s.agent_prompt.contains(&s.claude_code), "{}", s.agent_prompt);
+        assert!(s.agent_prompt.contains("export SWARMBOARD_TOKEN=\"sb_test\""));
+        assert!(s.agent_prompt.contains("\"SessionStart\""));
+        assert!(s.agent_prompt.contains(&s.agents_md));
+        println!("{}", s.agent_prompt);
         assert!(INSTRUCTIONS.split_whitespace().count() < 120);
     }
 }
