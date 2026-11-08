@@ -10,7 +10,7 @@ body.no-scroll {
   background: var(--color-canvas);
 }
 
-/* The sea: two canvases (behind and in front of the boat) */
+/* The sea: canvases behind and in front of the boat */
 .sea {
   position: absolute;
   inset: 0;
@@ -219,126 +219,16 @@ body.no-scroll {
   }
 }
 
-/* Crew: pixel sprites, kept upright and snapped to whole pixels by Sea.tsx */
+/* Crew (and the painted boat): one canvas between the SVG boat and its rail, faded in once the
+   art has loaded or the fallback is chosen. */
 .sea-crew {
-  position: absolute;
-  top: 0;
-  left: 0;
   z-index: 1;
   opacity: 0;
-  pointer-events: none;
-  will-change: transform;
+  transition: opacity var(--motion-duration-moderate) var(--motion-ease-standard);
 }
 
 .sea-crew.ready {
   opacity: 1;
-}
-
-.px {
-  display: block;
-  overflow: visible;
-}
-
-.px-body {
-  fill: var(--crew-c);
-}
-
-.px-eye {
-  fill: var(--crew-eye);
-  animation: px-blink 3.8s steps(1, end) infinite;
-  animation-delay: var(--d);
-}
-
-.px-hat {
-  fill: var(--crew-hat);
-}
-
-.px-skull {
-  fill: var(--crew-skull);
-}
-
-.px-bow {
-  fill: var(--crew-pink);
-}
-
-.px-bow-knot {
-  fill: var(--crew-pink-deep);
-}
-
-.px-gear {
-  fill: var(--crew-gear);
-}
-
-.px-brass {
-  fill: var(--crew-brass);
-}
-
-.px-lens {
-  fill: var(--crew-gear);
-}
-
-.px-pole {
-  fill: var(--crew-gear);
-}
-
-.px-flag {
-  fill: var(--crew-flag);
-}
-
-/* Two-frame swaps: legs ~4fps, flag and waving nub a little slower. */
-.px-fa,
-.px-fb {
-  --px-dur: 0.5s;
-  animation: px-a var(--px-dur) steps(1, end) infinite;
-  animation-delay: var(--d2);
-}
-
-.px-fb {
-  animation-name: px-b;
-}
-
-.px-flag {
-  --px-dur: 0.6s;
-}
-
-.px-nub {
-  --px-dur: 0.7s;
-}
-
-@keyframes px-a {
-  0% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0;
-  }
-  100% {
-    opacity: 1;
-  }
-}
-
-@keyframes px-b {
-  0% {
-    opacity: 0;
-  }
-  50% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-
-@keyframes px-blink {
-  0% {
-    opacity: 1;
-  }
-  96.8% {
-    opacity: 0;
-  }
-  100% {
-    opacity: 1;
-  }
 }
 
 @media (max-width: 480px) {

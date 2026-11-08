@@ -1,0 +1,323 @@
+{
+  "version": 1,
+  "fps": 12,
+  "crew": {
+    "frame": {
+      "w": 128,
+      "h": 128
+    },
+    "display": {
+      "height": 60
+    },
+    "anchor": {
+      "x": 64,
+      "y": 120
+    },
+    "members": [
+      {
+        "id": "flag",
+        "color": "#7fa37a",
+        "accessory": "pennant",
+        "sheet": "flag.webp",
+        "anims": {
+          "idle": {
+            "row": 0,
+            "frames": 12,
+            "loop": true
+          },
+          "blink": {
+            "row": 1,
+            "frames": 6,
+            "loop": false
+          },
+          "look": {
+            "row": 2,
+            "frames": 12,
+            "loop": false
+          },
+          "wave": {
+            "row": 3,
+            "frames": 12,
+            "loop": true
+          },
+          "squash": {
+            "row": 4,
+            "frames": 6,
+            "loop": false
+          },
+          "cheer": {
+            "row": 5,
+            "frames": 12,
+            "loop": false
+          }
+        }
+      },
+      {
+        "id": "bow",
+        "color": "#d9a63a",
+        "accessory": "bow",
+        "sheet": "bow.webp",
+        "anims": {
+          "idle": {
+            "row": 0,
+            "frames": 12,
+            "loop": true
+          },
+          "blink": {
+            "row": 1,
+            "frames": 6,
+            "loop": false
+          },
+          "look": {
+            "row": 2,
+            "frames": 12,
+            "loop": false
+          },
+          "wave": {
+            "row": 3,
+            "frames": 12,
+            "loop": true
+          },
+          "squash": {
+            "row": 4,
+            "frames": 6,
+            "loop": false
+          },
+          "cheer": {
+            "row": 5,
+            "frames": 12,
+            "loop": false
+          }
+        }
+      },
+      {
+        "id": "captain",
+        "color": "#DA7758",
+        "accessory": "pirate",
+        "sheet": "captain.webp",
+        "anims": {
+          "idle": {
+            "row": 0,
+            "frames": 12,
+            "loop": true
+          },
+          "blink": {
+            "row": 1,
+            "frames": 6,
+            "loop": false
+          },
+          "look": {
+            "row": 2,
+            "frames": 12,
+            "loop": false
+          },
+          "wave": {
+            "row": 3,
+            "frames": 12,
+            "loop": true
+          },
+          "squash": {
+            "row": 4,
+            "frames": 6,
+            "loop": false
+          },
+          "cheer": {
+            "row": 5,
+            "frames": 12,
+            "loop": false
+          }
+        }
+      },
+      {
+        "id": "headphones",
+        "color": "#8e5a8c",
+        "accessory": "headphones",
+        "sheet": "headphones.webp",
+        "anims": {
+          "idle": {
+            "row": 0,
+            "frames": 12,
+            "loop": true
+          },
+          "blink": {
+            "row": 1,
+            "frames": 6,
+            "loop": false
+          },
+          "look": {
+            "row": 2,
+            "frames": 12,
+            "loop": false
+          },
+          "wave": {
+            "row": 3,
+            "frames": 12,
+            "loop": true
+          },
+          "squash": {
+            "row": 4,
+            "frames": 6,
+            "loop": false
+          },
+          "cheer": {
+            "row": 5,
+            "frames": 12,
+            "loop": false
+          }
+        }
+      },
+      {
+        "id": "waver",
+        "color": "#6b7785",
+        "accessory": "beanie",
+        "sheet": "waver.webp",
+        "anims": {
+          "idle": {
+            "row": 0,
+            "frames": 12,
+            "loop": true
+          },
+          "blink": {
+            "row": 1,
+            "frames": 6,
+            "loop": false
+          },
+          "look": {
+            "row": 2,
+            "frames": 12,
+            "loop": false
+          },
+          "wave": {
+            "row": 3,
+            "frames": 12,
+            "loop": true
+          },
+          "squash": {
+            "row": 4,
+            "frames": 6,
+            "loop": false
+          },
+          "cheer": {
+            "row": 5,
+            "frames": 12,
+            "loop": false
+          }
+        }
+      },
+      {
+        "id": "lookout",
+        "color": "#4a6fa5",
+        "accessory": "spyglass",
+        "sheet": "lookout.webp",
+        "anims": {
+          "idle": {
+            "row": 0,
+            "frames": 12,
+            "loop": true
+          },
+          "blink": {
+            "row": 1,
+            "frames": 6,
+            "loop": false
+          },
+          "look": {
+            "row": 2,
+            "frames": 12,
+            "loop": false
+          },
+          "wave": {
+            "row": 3,
+            "frames": 12,
+            "loop": true
+          },
+          "squash": {
+            "row": 4,
+            "frames": 6,
+            "loop": false
+          },
+          "cheer": {
+            "row": 5,
+            "frames": 12,
+            "loop": false
+          }
+        }
+      }
+    ]
+  },
+  "boat": {
+    "sheet": "boat.webp",
+    "frame": {
+      "w": 1000,
+      "h": 760
+    },
+    "frames": 6,
+    "display": {
+      "width": 470
+    },
+    "waterline": 600,
+    "hull": [
+      [
+        912,
+        462
+      ],
+      [
+        892,
+        530
+      ],
+      [
+        840,
+        600
+      ],
+      [
+        740,
+        648
+      ],
+      [
+        600,
+        668
+      ],
+      [
+        450,
+        670
+      ],
+      [
+        310,
+        660
+      ],
+      [
+        205,
+        632
+      ],
+      [
+        150,
+        598
+      ],
+      [
+        128,
+        545
+      ],
+      [
+        118,
+        482
+      ]
+    ],
+    "deck": [
+      [
+        205,
+        520
+      ],
+      [
+        800,
+        520
+      ]
+    ],
+    "slots": [
+      250,
+      350,
+      450,
+      550,
+      650,
+      750
+    ]
+  }
+}

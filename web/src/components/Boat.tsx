@@ -4,8 +4,9 @@
 // their weights vary a little (hull heaviest, rigging lightest) for a hand-drawn feel.
 //
 // Viewbox 400 x 250, bow to the right; the waterline is y = WATERLINE. The boat is drawn in two
-// layers so the crew (Crew.tsx) can stand on deck between them: <Boat /> behind, <BoatRail /> in
-// front (the rail and its stanchions, through whose gaps the crew's feet show).
+// layers so the crew can stand on deck between them: <Boat /> behind, <BoatRail /> in front (a low
+// rail and its stanchions, at shin height, through whose gaps the crew's feet show). This is the
+// fallback boat; the painted one comes from /crew/manifest.json when it's there.
 
 export const BOAT_W = 400
 export const BOAT_H = 250
@@ -20,7 +21,7 @@ export const DECK_MID = (DECK_X0 + DECK_X1) / 2
 type Cubic = [number, number, number, number, number, number, number, number]
 
 const SHEER: Cubic = [30, 148, 110, 170, 290, 172, 374, 138]
-const RAIL: Cubic = [40, 133, 114, 153, 288, 155, 364, 125]
+const RAIL: Cubic = [36, 141, 112, 162, 289, 164, 368, 131]
 
 function sample(c: Cubic, n = 96): [number, number][] {
   const pts: [number, number][] = []
@@ -52,6 +53,26 @@ const RAIL_PTS = sample(RAIL)
 
 /** Deck height (viewbox y) at viewbox x: the sheer line the crew stand on. */
 export const deckY = (x: number) => yAt(SHEER_PTS, x)
+
+// The hull bottom, bow to stern, as drawn below (x decreases monotonically along it).
+const BOTTOM: Cubic[] = [
+  [374, 138, 362.4, 168.4, 340.6, 191.8, 306.2, 204.2],
+  [306.2, 204.2, 248.4, 220.4, 150.6, 222.2, 98.2, 214.2],
+  [98.2, 214.2, 66.4, 208.6, 46.2, 190.4, 38.4, 174.4],
+  [38.4, 174.4, 34.2, 166, 31.2, 157.4, 30, 148],
+]
+const BOTTOM_PTS = BOTTOM.flatMap((c) => sample(c, 48)).reverse()
+
+/** `n` buoyancy samples along the hull bottom, bow to stern: [x, bottom y, column height]. */
+export function hullSamples(n: number): [number, number, number][] {
+  const out: [number, number, number][] = []
+  for (let i = 0; i < n; i++) {
+    const x = 362 - (i * (362 - 40)) / (n - 1)
+    const y = yAt(BOTTOM_PTS, x)
+    out.push([x, y, Math.max(4, y - deckY(x))])
+  }
+  return out
+}
 
 const d = (c: Cubic) => `M${c[0]} ${c[1]}C${c[2]} ${c[3]} ${c[4]} ${c[5]} ${c[6]} ${c[7]}`
 

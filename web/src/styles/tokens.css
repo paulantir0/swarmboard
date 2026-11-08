@@ -145,21 +145,26 @@
   --sea-ink: var(--palette-ink-rgb);
   --sea-accent: var(--palette-blue-rgb);
 
-  /* Landing crew: flat, saturated pixel colors, the same in both themes */
-  --crew-orange: #d77757;
-  --crew-blue: #4a73c0;
+  /* Landing crew: flat pixel colors (the fallback crew), the same in both themes. Orange is
+     Clawd's own #DA7758. */
+  --crew-orange: #da7758;
+  --crew-blue: #4a6fa5;
   --crew-sage: #7ea86b;
   --crew-mustard: #d9a62e;
   --crew-plum: #9b5a96;
   --crew-slate: #6d7d90;
-  --crew-eye: #1a1a1a;
+  --crew-eye: #000000;
   --crew-hat: #1a1a1a;
   --crew-skull: #ffffff;
   --crew-pink: #ef8fb4;
   --crew-pink-deep: #cf5f8c;
   --crew-gear: #2d2c29;
+  --crew-cushion: #55534d;
   --crew-brass: #b8893a;
+  --crew-lens: #9cc3d9;
   --crew-flag: #d6453a;
+  /* A light edge around the painted crew and boat, dark theme only */
+  --crew-edge: none;
 }
 
 :root[data-theme='dark'] {
@@ -201,6 +206,7 @@
   --sea-accent: var(--palette-dark-blue-rgb);
   --crew-hat: #34322d;
   --crew-gear: #4a4842;
+  --crew-edge: #e9e3d4;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -243,6 +249,7 @@
     --sea-accent: var(--palette-dark-blue-rgb);
     --crew-hat: #34322d;
     --crew-gear: #4a4842;
+    --crew-edge: #e9e3d4;
   }
 }
 
