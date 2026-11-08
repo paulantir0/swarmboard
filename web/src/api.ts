@@ -22,10 +22,12 @@ export interface User {
   created_at: number
 }
 
+export type Role = 'owner' | 'admin' | 'member'
+
 export interface TeamSummary {
   id: string
   name: string
-  role: 'owner' | 'member'
+  role: Role
   member_count: number
   max_members: number
 }
@@ -52,7 +54,7 @@ export interface Member {
   user_id: string
   email: string
   handle: string
-  role: 'owner' | 'member'
+  role: Role
   joined_at: number
 }
 
@@ -90,6 +92,8 @@ export interface SetupSnippets {
   codex: string
   claude_hooks: string
   agents_md: string
+  /** One prompt that tells Claude Code or Codex to set all of the above up (includes the token). */
+  agent_prompt: string
 }
 
 export interface CreatedToken {
@@ -273,7 +277,33 @@ function qs(query?: Query): string {
   return s ? `?${s}` : ''
 }
 
+// In-flight request count, for the dashboard's top progress bar.
+let inflight = 0
+const inflightListeners = new Set<() => void>()
+
+function setInflight(delta: number) {
+  inflight += delta
+  for (const fn of inflightListeners) fn()
+}
+
+export const network = {
+  subscribe(fn: () => void): () => void {
+    inflightListeners.add(fn)
+    return () => inflightListeners.delete(fn)
+  },
+  inflight: (): number => inflight,
+}
+
 async function request<T>(method: string, path: string, body?: unknown, init?: RequestInit): Promise<T> {
+  setInflight(1)
+  try {
+    return await send<T>(method, path, body, init)
+  } finally {
+    setInflight(-1)
+  }
+}
+
+async function send<T>(method: string, path: string, body?: unknown, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' }
   let payload: BodyInit | undefined
   if (body instanceof Blob) {
@@ -301,11 +331,46 @@ async function request<T>(method: string, path: string, body?: unknown, init?: R
       data = null
     }
   }
-  if (!res.ok) {
-    const err = (data ?? {}) as { error?: string; message?: string }
-    throw new ApiError(res.status, err.error ?? 'error', err.message ?? defaultMessage(res.status))
-  }
+  if (!res.ok) throw toError(res.status, data)
   return data as T
+}
+
+function toError(status: number, data: unknown): ApiError {
+  const err = (data ?? {}) as { error?: string; message?: string }
+  return new ApiError(status, err.error ?? 'error', err.message ?? defaultMessage(status))
+}
+
+/** Max upload size, mirrors server MAX_FILE_BYTES. */
+export const MAX_FILE_BYTES = 10 * 1024 * 1024
+
+/** POST a raw file with upload progress (0..1). XHR because fetch has no upload progress. */
+function uploadFile(tid: string, file: File, onProgress?: (fraction: number) => void, signal?: AbortSignal): Promise<FileInfo> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${t(tid)}/files${qs({ filename: file.name || 'file' })}`)
+    xhr.withCredentials = true
+    xhr.setRequestHeader('Accept', 'application/json')
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.total ? e.loaded / e.total : 0)
+    }
+    xhr.onload = () => {
+      let data: unknown = null
+      try {
+        data = xhr.responseText ? JSON.parse(xhr.responseText) : null
+      } catch {
+        data = null
+      }
+      if (xhr.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data as FileInfo)
+      else if (xhr.status === 413) reject(new ApiError(413, 'too_large', 'File is over 10 MB'))
+      else reject(toError(xhr.status, data))
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'network', 'Network error'))
+    xhr.onabort = () => reject(new ApiError(0, 'aborted', 'Cancelled'))
+    signal?.addEventListener('abort', () => xhr.abort(), { once: true })
+    xhr.send(file)
+  })
 }
 
 function defaultMessage(status: number): string {
@@ -343,6 +408,8 @@ export const api = {
   renameTeam: (tid: string, name: string) => request<{ team: Team }>('PATCH', t(tid), { name }),
   rotateInvite: (tid: string) => request<Invite>('POST', `${t(tid)}/invite`),
   removeMember: (tid: string, uid: string) => request<{ ok: true }>('DELETE', `${t(tid)}/members/${enc(uid)}`),
+  setRole: (tid: string, uid: string, role: 'admin' | 'member') => request<Member>('PATCH', `${t(tid)}/members/${enc(uid)}`, { role }),
+  transferOwnership: (tid: string, uid: string) => request<{ ok: true }>('POST', `${t(tid)}/transfer`, { user_id: uid }),
   invite: (code: string) => request<InvitePreview>('GET', `/api/invites/${enc(code)}`),
   acceptInvite: (code: string) => request<{ team_id: string }>('POST', `/api/invites/${enc(code)}/accept`),
 
@@ -375,9 +442,12 @@ export const api = {
 
   // claims (path/resource leases and who is waiting)
   claims: (tid: string) => request<Claims>('GET', `${t(tid)}/claims`),
+  /** Owner/admin force-release of someone else's lease. */
+  releaseClaim: (tid: string, scope: string, repo?: string) =>
+    request<{ ok: true; released: number }>('POST', `${t(tid)}/claims/release`, { scope, repo: repo || undefined }),
 
   // files
-  upload: (tid: string, file: File) => request<FileInfo>('POST', `${t(tid)}/files${qs({ filename: file.name || 'image.png' })}`, file),
+  upload: uploadFile,
 
   // activity
   activity: (tid: string, after?: number, limit?: number) => request<Activity[]>('GET', `${t(tid)}/activity${qs({ after, limit })}`),
