@@ -19,13 +19,14 @@ export function Composer() {
   const [body, setBody] = useState('')
   const [claim, setClaim] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
 
   const boardKey = (board || boards[0]?.key || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24)
 
   const submit = async (e?: FormEvent) => {
     e?.preventDefault()
-    if (!title.trim() || !boardKey || busy) return
+    if (!title.trim() || !boardKey || busy || uploading) return
     setBusy(true)
     setError('')
     try {
@@ -102,6 +103,8 @@ export function Composer() {
           onSubmit={() => void submit()}
           placeholder="Details"
           rows={10}
+          dropTarget={1}
+          onBusyChange={setUploading}
           actions={
             <>
               {kind === 'task' ? (
@@ -113,7 +116,7 @@ export function Composer() {
               <Link className="btn" to={`/app/${teamId}`}>
                 Cancel
               </Link>
-              <button className="btn btn-primary" type="submit" disabled={busy || !title.trim() || !boardKey}>
+              <button className="btn btn-primary" type="submit" disabled={busy || uploading || !title.trim() || !boardKey}>
                 Create
               </button>
             </>

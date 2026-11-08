@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { api, ApiError, POST_KINDS, POST_STATUSES, type Post, type PostPatch, type PostStatus } from '../api'
 import { Icon } from '../components/Icon'
+import { Loadable } from '../components/Loader'
 import { Markdown } from '../components/Markdown'
 import { MarkdownField } from '../components/MarkdownField'
 import { PriorityIcon, StatusIcon, Who } from '../components/Marks'
@@ -26,6 +27,8 @@ export function PostView() {
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [bodyUploading, setBodyUploading] = useState(false)
+  const [commentUploading, setCommentUploading] = useState(false)
 
   const post = detail.data?.post
   const comments = detail.data?.comments ?? []
@@ -70,14 +73,14 @@ export function PostView() {
   }
 
   const saveEdit = async () => {
-    if (!title.trim()) return
+    if (!title.trim() || bodyUploading) return
     await patch({ title: title.trim(), body })
     setEditing(false)
   }
 
   const sendComment = async () => {
     const text = comment.trim()
-    if (!text || busy) return
+    if (!text || busy || commentUploading) return
     setBusy(true)
     setError('')
     try {
@@ -101,7 +104,9 @@ export function PostView() {
     return (
       <div className="view">
         <ViewHeader title={<span className="mono">#{n}</span>} back={back} />
-        <div className="empty">{detail.error ? <p className="muted">{detail.error.message}</p> : null}</div>
+        <Loadable ready={Boolean(detail.error)} label={`Loading #${n}`}>
+          <div className="empty">{detail.error ? <p className="muted">{detail.error.message}</p> : null}</div>
+        </Loadable>
       </div>
     )
   }
@@ -131,6 +136,8 @@ export function PostView() {
         ) : null}
       </ViewHeader>
 
+      {/* Same position as the loading branch's Loadable, so its loader crossfades into the post. */}
+      <Loadable ready label={`Loading #${n}`}>
       <div className="detail">
         <article className="detail-main">
           {editing ? (
@@ -142,12 +149,14 @@ export function PostView() {
                 onChange={setBody}
                 rows={12}
                 onSubmit={saveEdit}
+                dropTarget={2}
+                onBusyChange={setBodyUploading}
                 actions={
                   <>
                     <button className="btn" onClick={() => setEditing(false)}>
                       Cancel
                     </button>
-                    <button className="btn btn-primary" onClick={saveEdit} disabled={busy || !title.trim()}>
+                    <button className="btn btn-primary" onClick={saveEdit} disabled={busy || bodyUploading || !title.trim()}>
                       Save
                     </button>
                   </>
@@ -192,13 +201,15 @@ export function PostView() {
                 onSubmit={sendComment}
                 placeholder="Comment"
                 rows={3}
+                dropTarget={1}
+                onBusyChange={setCommentUploading}
                 actions={
                   <>
                     <span className="kbd-hint muted" title={`${MOD_KEY} + Enter`}>
                       <span className="kbd">{MOD_KEY}</span>
                       <span className="kbd">↵</span>
                     </span>
-                    <button className="btn btn-primary" onClick={sendComment} disabled={busy || !comment.trim()}>
+                    <button className="btn btn-primary" onClick={sendComment} disabled={busy || commentUploading || !comment.trim()}>
                       Comment
                     </button>
                   </>
@@ -282,6 +293,7 @@ export function PostView() {
           {error ? <p className="error-text prop-error">{error}</p> : null}
         </aside>
       </div>
+      </Loadable>
     </div>
   )
 }

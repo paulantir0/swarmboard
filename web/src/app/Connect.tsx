@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { api, type CreatedToken } from '../api'
 import { CopyButton, Snippet } from '../components/CopyButton'
 import { Icon } from '../components/Icon'
@@ -63,15 +63,21 @@ export function Connect() {
   const [created, setCreated] = useState<CreatedToken | null>(() => readPrompt(teamId))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  // A token we just made isn't in the list until the next fetch; don't mistake it for revoked.
+  const fresh = useRef<string | null>(null)
 
   useEffect(() => setCreated(readPrompt(teamId)), [teamId])
 
-  // Drop a remembered prompt whose token is gone.
+  // Drop a remembered prompt whose token is gone (revoked elsewhere).
   useEffect(() => {
-    if (created && tokens.data && !tokens.data.some((t) => t.id === created.id)) {
-      writePrompt(teamId, null)
-      setCreated(null)
+    if (!created || !tokens.data) return
+    if (tokens.data.some((t) => t.id === created.id)) {
+      if (fresh.current === created.id) fresh.current = null
+      return
     }
+    if (fresh.current === created.id) return
+    writePrompt(teamId, null)
+    setCreated(null)
   }, [tokens.data, created, teamId])
 
   const create = async (e?: FormEvent) => {
@@ -81,6 +87,7 @@ export function Connect() {
     setError('')
     try {
       const t = await api.createToken(teamId, label.trim() || placeholder)
+      fresh.current = t.id
       writePrompt(teamId, t)
       setCreated(t)
       setLabel('')

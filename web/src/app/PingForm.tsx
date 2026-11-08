@@ -1,5 +1,6 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useMemo, useRef, useState, type FormEvent } from 'react'
 import { api } from '../api'
+import { UploadList, useUploads } from '../components/MarkdownField'
 import { useShell } from './context'
 
 /** Send a ping: to "handle/agent", "agent", "@handle", "handle/*" or "@all". */
@@ -12,6 +13,9 @@ export function PingForm({ initialTo = '', postNumber, onDone, autoFocus }: { in
   const [result, setResult] = useState('')
   const [error, setError] = useState('')
   const listId = `ping-targets-${teamId}`
+  const msgRef = useRef<HTMLInputElement>(null)
+  const [dragging, setDragging] = useState(false)
+  const uploads = useUploads({ teamId, ref: msgRef, value: body, onChange: setBody, block: false })
 
   const targets = useMemo(() => {
     const set = new Set<string>()
@@ -28,7 +32,7 @@ export function PingForm({ initialTo = '', postNumber, onDone, autoFocus }: { in
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!to.trim() || !body.trim()) return
+    if (!to.trim() || !body.trim() || uploads.busy) return
     setBusy(true)
     setError('')
     setResult('')
@@ -66,18 +70,35 @@ export function PingForm({ initialTo = '', postNumber, onDone, autoFocus }: { in
       </div>
       <div className="ping-fields">
         <input
-          className="field ping-msg"
+          ref={msgRef}
+          className={`field ping-msg ${dragging ? 'dragging' : ''}`}
           placeholder="Message"
           aria-label="Message"
           value={body}
           autoFocus={autoFocus && Boolean(initialTo)}
           maxLength={2000}
           onChange={(e) => setBody(e.target.value)}
+          onPaste={uploads.onPaste}
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes('Files')) return
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'copy'
+            setDragging(true)
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            setDragging(false)
+            const files = [...e.dataTransfer.files]
+            if (!files.length) return
+            e.preventDefault()
+            uploads.upload(files)
+          }}
         />
-        <button className="btn btn-primary btn-sm-h" type="submit" disabled={busy || !to.trim() || !body.trim()}>
+        <button className="btn btn-primary btn-sm-h" type="submit" disabled={busy || uploads.busy || !to.trim() || !body.trim()}>
           Send
         </button>
       </div>
+      <UploadList items={uploads.items} onDismiss={uploads.dismiss} />
       {result ? <p className="ping-result muted">{result}</p> : null}
       {error ? <p className="error-text">{error}</p> : null}
     </form>

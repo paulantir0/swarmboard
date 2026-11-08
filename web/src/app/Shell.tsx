@@ -2,9 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { api, ApiError, UNAUTHORIZED_EVENT, type Me } from '../api'
 import { Wordmark } from '../components/Brand'
+import { WindowDrop } from '../components/DropZone'
 import { Icon, type IconName } from '../components/Icon'
+import { BootLoader } from '../components/Loader'
+import { TopProgress } from '../components/TopProgress'
 import { usePoll } from '../lib/usePoll'
+import { PROMPT_KEY } from './Connect'
 import { ShellContext, type ShellCtx } from './context'
+import { JoinForm } from './JoinForm'
 import '../styles/app.css'
 
 const LAST_TEAM = 'sb:last-team'
@@ -25,6 +30,18 @@ function writeLastTeam(id: string) {
   }
 }
 
+/** Saved Connect prompts carry tokens: forget them on sign-out. */
+function forgetPrompts() {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i)
+      if (k?.startsWith(PROMPT_KEY)) localStorage.removeItem(k)
+    }
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 /** /app → the last team you looked at, else your first team. */
 export function TeamRedirect() {
   const [target, setTarget] = useState<string | null>(null)
@@ -38,7 +55,7 @@ export function TeamRedirect() {
       })
       .catch(() => setTarget('/'))
   }, [])
-  if (!target) return <div className="app-loading" />
+  if (!target) return <BootLoader />
   return <Navigate to={target} replace />
 }
 
@@ -119,11 +136,13 @@ export function Shell() {
       </div>
     )
   }
-  if (!me) return <div className="app-loading" />
+  if (!me) return <BootLoader />
   if (!team) return <Navigate to="/app" replace />
 
   return (
     <ShellContext.Provider value={ctx}>
+      <TopProgress />
+      <WindowDrop />
       <div className={`app ${navOpen ? 'nav-open' : ''}`}>
         <Sidebar ctx={ctx!} onClose={() => setNavOpen(false)} />
         <div className="nav-scrim" onClick={() => setNavOpen(false)} aria-hidden="true" />
@@ -141,6 +160,7 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
   const location = useLocation()
   const [params] = useSearchParams()
   const [menu, setMenu] = useState(false)
+  const [joining, setJoining] = useState(false)
   const [adding, setAdding] = useState(false)
   const [boardKey, setBoardKey] = useState('')
   const [boardError, setBoardError] = useState('')
@@ -153,6 +173,7 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
   const activeAgents = agents.filter((a) => a.active).length
 
   useEffect(() => {
+    if (!menu) setJoining(false)
     if (!menu) return
     const close = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenu(false)
@@ -170,6 +191,7 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
     try {
       await api.logout()
     } finally {
+      forgetPrompts()
       navigate('/', { replace: true })
     }
   }
@@ -217,6 +239,16 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
                   {t.id === teamId ? <Icon name="check" size={14} /> : null}
                 </button>
               ))}
+              {joining ? (
+                <div className="menu-join">
+                  <JoinForm refreshMe={ctx.refreshMe} compact autoFocus onDone={() => setMenu(false)} />
+                </div>
+              ) : (
+                <button role="menuitem" className="menu-item" onClick={() => setJoining(true)}>
+                  <span className="menu-label">Join a board</span>
+                  <Icon name="logIn" size={14} />
+                </button>
+              )}
               <div className="menu-sep" />
               <div className="menu-meta mono">{me.user.email}</div>
               <button role="menuitem" className="menu-item" onClick={signOut}>

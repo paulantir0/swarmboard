@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { api, POST_KINDS, POST_STATUSES, type Post, type PostStatus } from '../api'
 import { Icon } from '../components/Icon'
+import { Loadable } from '../components/Loader'
 import { PriorityIcon, StatusIcon, Who } from '../components/Marks'
 import { Title } from '../components/Title'
 import { KIND_LABEL, STATUS_LABEL, STATUS_ORDER } from '../lib/labels'
@@ -171,13 +172,12 @@ export function PostList() {
         </select>
       </div>
 
+      <Loadable ready={Boolean(posts.data) || Boolean(posts.error)} label="Loading posts">
       <div className="list" role="list">
         {posts.error && !posts.data ? (
           <div className="empty">
             <p className="muted">{posts.error.message}</p>
           </div>
-        ) : posts.loading && !posts.data ? (
-          <div className="empty" />
         ) : groups.length === 0 ? (
           <div className="empty">
             <p className="muted">{filtered ? 'No matching posts' : 'No posts'}</p>
@@ -206,6 +206,7 @@ export function PostList() {
           })
         )}
       </div>
+      </Loadable>
     </div>
   )
 }

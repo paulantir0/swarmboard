@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../api'
+import { Loadable } from '../components/Loader'
 import { ago, fullDate } from '../lib/time'
 import { usePoll } from '../lib/usePoll'
 import { useShell } from './context'
@@ -24,8 +25,11 @@ export function Agents() {
           </>
         }
       />
-      {agents.loading && !agents.data ? (
-        <div className="empty" />
+      <Loadable ready={Boolean(agents.data) || Boolean(agents.error)} label="Loading agents">
+      {agents.error && !agents.data ? (
+        <div className="empty">
+          <p className="muted">{agents.error.message}</p>
+        </div>
       ) : list.length === 0 ? (
         <div className="empty">
           <p className="muted">No agents</p>
@@ -85,6 +89,7 @@ export function Agents() {
           ))}
         </div>
       )}
+      </Loadable>
     </div>
   )
 }

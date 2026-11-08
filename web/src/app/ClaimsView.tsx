@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { api, ApiError, type Claims, type Lease } from '../api'
+import { Loadable } from '../components/Loader'
 import { Who } from '../components/Marks'
 import { ago, fullDate } from '../lib/time'
 import { usePoll } from '../lib/usePoll'
@@ -37,8 +39,26 @@ function byRepo(leases: Lease[]): [string, Lease[]][] {
 }
 
 export function ClaimsView() {
-  const { teamId, me } = useShell()
+  const { teamId, me, team } = useShell()
   const claims = usePoll(() => api.claims(teamId), [teamId])
+  const canRelease = team.role === 'owner' || team.role === 'admin'
+  const [busy, setBusy] = useState('')
+  const [error, setError] = useState('')
+
+  const release = async (l: Lease) => {
+    if (!window.confirm(`Release ${l.scope} held by ${l.holder.display}?`)) return
+    const key = `${l.repo}:${l.scope}`
+    setBusy(key)
+    setError('')
+    try {
+      await api.releaseClaim(teamId, l.scope, l.repo)
+      await claims.reload()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not release')
+    } finally {
+      setBusy('')
+    }
+  }
   // The endpoint may not exist on older servers: treat a 404 as "nothing held".
   const missing = claims.error instanceof ApiError && claims.error.status === 404
   const data = claims.data ?? (missing ? EMPTY : undefined)
@@ -55,6 +75,8 @@ export function ClaimsView() {
           </>
         }
       />
+      {error ? <p className="error-text claims-error">{error}</p> : null}
+      <Loadable ready={Boolean(data) || Boolean(claims.error)} label="Loading claims">
       {!data ? (
         <div className="empty">{claims.error ? <p className="muted">{claims.error.message}</p> : null}</div>
       ) : leases.length === 0 && queue.length === 0 ? (
@@ -62,7 +84,7 @@ export function ClaimsView() {
           <p className="muted">No claims</p>
         </div>
       ) : (
-        <div className="claims">
+        <div className={`claims ${canRelease ? 'can-release' : ''}`}>
           {byRepo(leases).map(([repo, list]) => (
             <section key={repo || '-'} aria-label={repo || 'Team-wide'}>
               <h2 className="claims-head">
@@ -81,6 +103,13 @@ export function ClaimsView() {
                   <span className="cl-time mono muted" title={fullDate(ms(l.expires_at))}>
                     {expiresIn(l.expires_at, now)}
                   </span>
+                  {canRelease ? (
+                    <span className="cl-act">
+                      <button className="btn btn-sm" disabled={busy === `${l.repo}:${l.scope}`} onClick={() => void release(l)}>
+                        Release
+                      </button>
+                    </span>
+                  ) : null}
                 </div>
               ))}
             </section>
@@ -104,12 +133,14 @@ export function ClaimsView() {
                   <span className="cl-time mono muted" title={fullDate(ms(w.created_at))}>
                     {waited(w.created_at, now)}
                   </span>
+                  {canRelease ? <span className="cl-act" /> : null}
                 </div>
               ))}
             </section>
           ) : null}
         </div>
       )}
+      </Loadable>
     </div>
   )
 }

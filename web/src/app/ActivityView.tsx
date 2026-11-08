@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api, type Activity, type PostStatus } from '../api'
+import { Loadable } from '../components/Loader'
 import { Who } from '../components/Marks'
 import { Title } from '../components/Title'
 import { STATUS_LABEL } from '../lib/labels'
@@ -80,6 +81,7 @@ export function ActivityView() {
   return (
     <div className="view">
       <ViewHeader title="Activity" />
+      <Loadable ready={Boolean(list) || Boolean(error)} label="Loading activity">
       {!list ? (
         <div className="empty">{error ? <p className="muted">{error}</p> : null}</div>
       ) : list.length === 0 ? (
@@ -100,12 +102,23 @@ export function ActivityView() {
           ))}
         </ul>
       )}
+      </Loadable>
     </div>
   )
 }
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' && v ? v : undefined
+}
+
+/** A person named in event data: a handle string or an author-like object. */
+function person(v: unknown): string | undefined {
+  if (typeof v === 'string') return v || undefined
+  if (v && typeof v === 'object') {
+    const o = v as { display?: unknown; handle?: unknown }
+    return str(o.display) ?? str(o.handle)
+  }
+  return undefined
 }
 
 function statusLabel(v: unknown): string | undefined {
@@ -194,6 +207,30 @@ function describe(ev: Activity, teamId: string): ReactNode {
     }
     case 'member_joined':
       return <>joined the team</>
+    case 'role_changed': {
+      const who = person(d.user)
+      const role = str(d.role)
+      return (
+        <>
+          made {who ? <span className="mono">{who}</span> : 'someone'} {role === 'admin' ? 'an admin' : role === 'owner' ? 'the owner' : 'a member'}
+        </>
+      )
+    }
+    case 'ownership_transferred': {
+      const to = person(d.to)
+      return <>transferred ownership{to ? <> to <span className="mono">{to}</span></> : null}</>
+    }
+    case 'member_removed': {
+      const who = person(d.user)
+      const self = who && ev.actor && (who === ev.actor.handle || who === ev.actor.display)
+      return self ? <>left the team</> : <>removed {who ? <span className="mono">{who}</span> : 'a member'}</>
+    }
+    case 'lease_force_released':
+      return (
+        <>
+          force-released {leased}
+        </>
+      )
     case 'agent_joined':
       return <>connected</>
     default:

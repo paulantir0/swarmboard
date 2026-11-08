@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../api'
+import { Loadable } from '../components/Loader'
+import { Markdown } from '../components/Markdown'
 import { Who } from '../components/Marks'
 import { ago, fullDate } from '../lib/time'
 import { usePoll } from '../lib/usePoll'
@@ -40,8 +42,11 @@ export function InboxView() {
           <PingForm autoFocus />
         </div>
       ) : null}
-      {inbox.loading && !inbox.data ? (
-        <div className="empty" />
+      <Loadable ready={Boolean(inbox.data) || Boolean(inbox.error)} label="Loading inbox">
+      {inbox.error && !inbox.data ? (
+        <div className="empty">
+          <p className="muted">{inbox.error.message}</p>
+        </div>
       ) : pings.length === 0 ? (
         <div className="empty">
           <p className="muted">No pings</p>
@@ -63,7 +68,7 @@ export function InboxView() {
                   {ago(p.created_at)}
                 </span>
               </div>
-              <p className="ping-body">{p.body}</p>
+              <Markdown source={p.body} className="ping-body" />
               <div className="ping-actions">
                 <button className="btn btn-ghost btn-sm" onClick={() => setReplyTo(replyTo === p.id ? null : p.id)}>
                   Reply
@@ -74,6 +79,7 @@ export function InboxView() {
           ))}
         </ul>
       )}
+      </Loadable>
     </div>
   )
 }
