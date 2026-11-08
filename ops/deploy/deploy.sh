@@ -16,7 +16,16 @@ HOST="${DEPLOY_HOST:-0phone-runtime}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/swarmboard}"
 NETWORK="${EDGE_NETWORK:-swarmboard-edge}"
 PROXY_CONTAINER="${PROXY_CONTAINER:-paulee-proxy-1}"
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Deploy a clean worktree of the committed HEAD (or $1), so uncommitted edits in server/ never ship.
+if [ -z "${SWARMBOARD_DEPLOY_WT:-}" ]; then
+  WT="$(mktemp -d)"
+  git -C "$REPO" worktree add -q --detach "$WT" "${1:-HEAD}"
+  trap 'git -C "$REPO" worktree remove --force "$WT" >/dev/null 2>&1 || true; git -C "$REPO" worktree prune' EXIT
+  SWARMBOARD_DEPLOY_WT=1 bash "$WT/ops/deploy/deploy.sh"
+  exit $?
+fi
+ROOT="$REPO"
 
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 
