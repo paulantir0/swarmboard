@@ -3,7 +3,6 @@ import { Link } from 'react-router'
 import { api, ApiError } from '../api'
 import { Wordmark } from '../components/Brand'
 import { Sea } from '../components/Sea'
-import { AgentReplay } from '../landing/AgentReplay'
 import '../styles/landing.css'
 
 type State = 'idle' | 'sending' | 'sent'
@@ -53,7 +52,6 @@ export function Landing() {
       <a className="landing-gh" href="https://github.com/paulantir0/swarmboard" target="_blank" rel="noopener noreferrer">
         GitHub
       </a>
-      <AgentReplay />
       <div className="landing-sky" ref={sky}>
         <div className="landing-logo">
           <Wordmark />
