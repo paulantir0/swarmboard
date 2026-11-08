@@ -10,6 +10,7 @@ use sqlx::{SqliteConnection, SqliteExecutor, SqlitePool};
 
 use crate::{
     config::{Config, MAX_TEAM_MEMBERS},
+    domain::collab::leases,
     error::{AppError, AppResult},
     models::TokenAuth,
     util::{new_id, now_ms, random_token, sha256_hex},
@@ -58,12 +59,30 @@ pub struct Team {
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Owner,
+    Admin,
     Member,
 }
 
 impl Role {
     fn parse(s: &str) -> Role {
-        if s == "owner" { Role::Owner } else { Role::Member }
+        match s {
+            "owner" => Role::Owner,
+            "admin" => Role::Admin,
+            _ => Role::Member,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::Owner => "owner",
+            Role::Admin => "admin",
+            Role::Member => "member",
+        }
+    }
+
+    /// Owner or admin: may rename the team, rotate the invite, remove members, force-release leases.
+    pub fn is_admin(self) -> bool {
+        matches!(self, Role::Owner | Role::Admin)
     }
 }
 
@@ -71,7 +90,7 @@ impl Role {
 pub struct TeamSummary {
     pub id: String,
     pub name: String,
-    /// "owner" | "member"
+    /// "owner" | "admin" | "member"
     pub role: String,
     pub member_count: i64,
     pub max_members: i64,
@@ -82,7 +101,7 @@ pub struct Member {
     pub user_id: String,
     pub email: String,
     pub handle: String,
-    /// "owner" | "member"
+    /// "owner" | "admin" | "member"
     pub role: String,
     pub joined_at: i64,
 }
@@ -315,12 +334,7 @@ pub async fn list_user_teams(db: &SqlitePool, user_id: &str) -> AppResult<Vec<Te
 }
 
 pub async fn member_role(db: &SqlitePool, team_id: &str, user_id: &str) -> AppResult<Option<Role>> {
-    let role: Option<String> = sqlx::query_scalar("SELECT role FROM memberships WHERE team_id = ? AND user_id = ?")
-        .bind(team_id)
-        .bind(user_id)
-        .fetch_optional(db)
-        .await?;
-    Ok(role.map(|r| Role::parse(&r)))
+    role_in(db, team_id, user_id).await
 }
 
 pub async fn get_team(db: &SqlitePool, team_id: &str) -> AppResult<Option<Team>> {
@@ -351,22 +365,141 @@ pub async fn rename_team(db: &SqlitePool, team_id: &str, raw_name: &str) -> AppR
     get_team(db, team_id).await?.ok_or_else(|| AppError::NotFound("team not found".into()))
 }
 
-/// Owner removes anyone else; members may remove themselves; the owner can't leave.
-/// The removed member's API tokens for this team are revoked.
-pub async fn remove_member(db: &SqlitePool, team_id: &str, actor_id: &str, target_id: &str) -> AppResult<()> {
-    let actor_role = member_role(db, team_id, actor_id)
-        .await?
-        .ok_or_else(|| AppError::Forbidden("not a member of this team".into()))?;
-    let target_role = member_role(db, team_id, target_id)
+async fn handle_of<'e>(ex: impl SqliteExecutor<'e>, user_id: &str) -> AppResult<String> {
+    Ok(sqlx::query_scalar("SELECT handle FROM users WHERE id = ?").bind(user_id).fetch_optional(ex).await?.unwrap_or_default())
+}
+
+async fn role_in<'e>(ex: impl SqliteExecutor<'e>, team_id: &str, user_id: &str) -> AppResult<Option<Role>> {
+    let role: Option<String> = sqlx::query_scalar("SELECT role FROM memberships WHERE team_id = ? AND user_id = ?")
+        .bind(team_id)
+        .bind(user_id)
+        .fetch_optional(ex)
+        .await?;
+    Ok(role.map(|r| Role::parse(&r)))
+}
+
+async fn insert_event<'e>(ex: impl SqliteExecutor<'e>, team_id: &str, actor_id: &str, kind: &str, data: serde_json::Value) -> AppResult<()> {
+    sqlx::query("INSERT INTO events (team_id, at, actor_user_id, kind, data) VALUES (?, ?, ?, ?, ?)")
+        .bind(team_id)
+        .bind(now_ms())
+        .bind(actor_id)
+        .bind(kind)
+        .bind(data.to_string())
+        .execute(ex)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_member(db: &SqlitePool, team_id: &str, user_id: &str) -> AppResult<Option<Member>> {
+    Ok(sqlx::query_as::<_, Member>(
+        "SELECT m.user_id, u.email, u.handle, m.role, m.joined_at \
+         FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.team_id = ? AND m.user_id = ?",
+    )
+    .bind(team_id)
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?)
+}
+
+/// Owner only: make a member an admin or back. The owner's own role changes only via transfer.
+pub async fn set_role(db: &SqlitePool, team_id: &str, actor_id: &str, target_id: &str, raw_role: &str) -> AppResult<Member> {
+    let role = match raw_role.trim() {
+        "admin" => Role::Admin,
+        "member" => Role::Member,
+        "owner" => return Err(AppError::BadRequest("use transfer to make someone the owner".into())),
+        _ => return Err(AppError::BadRequest("role must be \"admin\" or \"member\"".into())),
+    };
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    match role_in(&mut *tx, team_id, actor_id).await? {
+        Some(Role::Owner) => {}
+        Some(_) => return Err(AppError::Forbidden("only the team owner can change roles".into())),
+        None => return Err(AppError::Forbidden("not a member of this team".into())),
+    }
+    let current = role_in(&mut *tx, team_id, target_id)
         .await?
         .ok_or_else(|| AppError::NotFound("not a member of this team".into()))?;
-    if target_role == Role::Owner {
-        return Err(AppError::Forbidden("the owner can't leave their own team".into()));
+    if current == Role::Owner {
+        return Err(AppError::BadRequest("the owner's role can't be changed; transfer ownership instead".into()));
     }
-    if actor_id != target_id && actor_role != Role::Owner {
-        return Err(AppError::Forbidden("only the owner can remove members".into()));
+    if current != role {
+        sqlx::query("UPDATE memberships SET role = ? WHERE team_id = ? AND user_id = ?")
+            .bind(role.as_str())
+            .bind(team_id)
+            .bind(target_id)
+            .execute(&mut *tx)
+            .await?;
+        let handle = handle_of(&mut *tx, target_id).await?;
+        let data = serde_json::json!({ "user": handle, "user_id": target_id, "role": role.as_str() });
+        insert_event(&mut *tx, team_id, actor_id, "role_changed", data).await?;
     }
-    let mut tx = db.begin().await?;
+    tx.commit().await?;
+    get_member(db, team_id, target_id).await?.ok_or_else(|| AppError::NotFound("not a member of this team".into()))
+}
+
+/// Owner only: `target_id` (a member) becomes owner, the previous owner becomes admin, and
+/// teams.owner_id follows. One transaction under the write lock.
+pub async fn transfer_ownership(db: &SqlitePool, team_id: &str, actor_id: &str, target_id: &str) -> AppResult<()> {
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    match role_in(&mut *tx, team_id, actor_id).await? {
+        Some(Role::Owner) => {}
+        Some(_) => return Err(AppError::Forbidden("only the team owner can transfer ownership".into())),
+        None => return Err(AppError::Forbidden("not a member of this team".into())),
+    }
+    if target_id == actor_id {
+        return Err(AppError::BadRequest("you already own this team".into()));
+    }
+    if role_in(&mut *tx, team_id, target_id).await?.is_none() {
+        return Err(AppError::BadRequest("the new owner must be a member of this team".into()));
+    }
+    // Demote first: at most one owner row per team (unique index).
+    sqlx::query("UPDATE memberships SET role = 'admin' WHERE team_id = ? AND user_id = ?")
+        .bind(team_id)
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE memberships SET role = 'owner' WHERE team_id = ? AND user_id = ?")
+        .bind(team_id)
+        .bind(target_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE teams SET owner_id = ? WHERE id = ?").bind(target_id).bind(team_id).execute(&mut *tx).await?;
+    let from = handle_of(&mut *tx, actor_id).await?;
+    let to = handle_of(&mut *tx, target_id).await?;
+    let data = serde_json::json!({ "from": from, "to": to, "from_id": actor_id, "to_id": target_id });
+    insert_event(&mut *tx, team_id, actor_id, "ownership_transferred", data).await?;
+    tx.commit().await?;
+    tracing::info!(%team_id, from = %actor_id, to = %target_id, "ownership transferred");
+    Ok(())
+}
+
+/// Who may remove whom: the owner removes anyone else; an admin removes plain members; anyone
+/// may leave, except the owner (who must transfer ownership first).
+fn check_removal(actor: Role, target: Role, is_self: bool) -> AppResult<()> {
+    if is_self {
+        return match actor {
+            Role::Owner => Err(AppError::BadRequest("transfer ownership first".into())),
+            _ => Ok(()),
+        };
+    }
+    match (actor, target) {
+        (Role::Owner, _) => Ok(()),
+        (Role::Admin, Role::Member) => Ok(()),
+        (Role::Admin, _) => Err(AppError::Forbidden("admins can only remove members, not admins or the owner".into())),
+        (Role::Member, _) => Err(AppError::Forbidden("only the owner or an admin can remove members".into())),
+    }
+}
+
+/// Removes `target_id` from the team (see `check_removal`), revokes their API tokens for it and
+/// frees their agents' leases there (granting to waiters).
+pub async fn remove_member(db: &SqlitePool, team_id: &str, actor_id: &str, target_id: &str) -> AppResult<()> {
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let actor_role = role_in(&mut *tx, team_id, actor_id)
+        .await?
+        .ok_or_else(|| AppError::Forbidden("not a member of this team".into()))?;
+    let target_role = role_in(&mut *tx, team_id, target_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("not a member of this team".into()))?;
+    check_removal(actor_role, target_role, actor_id == target_id)?;
     sqlx::query("DELETE FROM memberships WHERE team_id = ? AND user_id = ?")
         .bind(team_id)
         .bind(target_id)
@@ -378,7 +511,15 @@ pub async fn remove_member(db: &SqlitePool, team_id: &str, actor_id: &str, targe
         .bind(target_id)
         .execute(&mut *tx)
         .await?;
+    let user = handle_of(&mut *tx, target_id).await?;
+    let by = handle_of(&mut *tx, actor_id).await?;
+    let data = serde_json::json!({ "user": user, "by": by, "user_id": target_id, "by_id": actor_id });
+    insert_event(&mut *tx, team_id, actor_id, "member_removed", data).await?;
     tx.commit().await?;
+    // The membership is gone, so their tokens no longer authenticate and their agents can't re-claim.
+    let actor = crate::models::Actor { team_id: team_id.into(), user_id: actor_id.into(), agent_id: None };
+    leases::release_user(db, team_id, target_id, &actor, &by).await?;
+    tracing::info!(%team_id, %target_id, by = %actor_id, "member removed");
     Ok(())
 }
 
@@ -936,28 +1077,262 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A team with owner, an admin and two plain members.
+    async fn team_with_roles(db: &SqlitePool) -> (String, User, User, User, User) {
+        let owner = signup(db, "owner@example.com").await;
+        let team = personal_team(db, &owner).await;
+        let code = current_invite(db, &team, &owner.id).await.unwrap();
+        let mut users = vec![];
+        for h in ["adam", "mia", "max"] {
+            let u = signup(db, &format!("{h}@example.com")).await;
+            join_via_invite(db, &code, &u.id).await.unwrap();
+            users.push(u);
+        }
+        let max = users.pop().unwrap();
+        let mia = users.pop().unwrap();
+        let adam = users.pop().unwrap();
+        set_role(db, &team, &owner.id, &adam.id, "admin").await.unwrap();
+        (team, owner, adam, mia, max)
+    }
+
+    async fn event_data(db: &SqlitePool, team: &str, kind: &str) -> Vec<serde_json::Value> {
+        let rows: Vec<String> = sqlx::query_scalar("SELECT data FROM events WHERE team_id = ? AND kind = ? ORDER BY id")
+            .bind(team)
+            .bind(kind)
+            .fetch_all(db)
+            .await
+            .unwrap();
+        rows.iter().map(|d| serde_json::from_str(d).unwrap()).collect()
+    }
+
+    #[test]
+    fn removal_matrix() {
+        use Role::*;
+        // (actor, target, self?) -> allowed
+        let ok = |a, t, me| check_removal(a, t, me).is_ok();
+        assert!(ok(Owner, Admin, false) && ok(Owner, Member, false));
+        assert!(ok(Admin, Member, false));
+        assert!(!ok(Admin, Admin, false) && !ok(Admin, Owner, false));
+        assert!(!ok(Member, Member, false) && !ok(Member, Admin, false) && !ok(Member, Owner, false));
+        assert!(ok(Admin, Admin, true) && ok(Member, Member, true));
+        match check_removal(Owner, Owner, true) {
+            Err(AppError::BadRequest(m)) => assert_eq!(m, "transfer ownership first"),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(check_removal(Admin, Owner, false), Err(AppError::Forbidden(_))));
+    }
+
+    #[tokio::test]
+    async fn role_changes() {
+        let db = test_pool().await;
+        let (team, owner, adam, mia, max) = team_with_roles(&db).await;
+        assert_eq!(member_role(&db, &team, &adam.id).await.unwrap(), Some(Role::Admin));
+        let mine = list_user_teams(&db, &adam.id).await.unwrap();
+        assert_eq!(mine.iter().find(|t| t.id == team).unwrap().role, "admin");
+        let roles: Vec<(String, String)> = list_members(&db, &team).await.unwrap().into_iter().map(|m| (m.handle, m.role)).collect();
+        assert_eq!(roles[0], ("owner".into(), "owner".into()));
+        assert!(roles.contains(&("adam".into(), "admin".into())));
+
+        // Only the owner changes roles; admins and members get 403.
+        assert!(matches!(set_role(&db, &team, &adam.id, &mia.id, "admin").await, Err(AppError::Forbidden(_))));
+        assert!(matches!(set_role(&db, &team, &mia.id, &max.id, "admin").await, Err(AppError::Forbidden(_))));
+        let outsider = signup(&db, "out@example.com").await;
+        assert!(matches!(set_role(&db, &team, &outsider.id, &mia.id, "admin").await, Err(AppError::Forbidden(_))));
+        // The owner's role can't be changed here; bad roles and non-members are rejected.
+        assert!(matches!(set_role(&db, &team, &owner.id, &owner.id, "member").await, Err(AppError::BadRequest(_))));
+        assert!(matches!(set_role(&db, &team, &owner.id, &mia.id, "owner").await, Err(AppError::BadRequest(_))));
+        assert!(matches!(set_role(&db, &team, &owner.id, &mia.id, "god").await, Err(AppError::BadRequest(_))));
+        assert!(matches!(set_role(&db, &team, &owner.id, &outsider.id, "admin").await, Err(AppError::NotFound(_))));
+
+        let m = set_role(&db, &team, &owner.id, &mia.id, "admin").await.unwrap();
+        assert_eq!((m.user_id.as_str(), m.handle.as_str(), m.role.as_str()), (mia.id.as_str(), "mia", "admin"));
+        assert_eq!(set_role(&db, &team, &owner.id, &mia.id, "member").await.unwrap().role, "member");
+        let ev = event_data(&db, &team, "role_changed").await;
+        assert_eq!(ev.len(), 3, "{ev:?}");
+        assert_eq!((ev[2]["user"].as_str(), ev[2]["role"].as_str()), (Some("mia"), Some("member")));
+        // Setting the same role again is a no-op without an event.
+        set_role(&db, &team, &owner.id, &mia.id, "member").await.unwrap();
+        assert_eq!(event_data(&db, &team, "role_changed").await.len(), 3);
+    }
+
     #[tokio::test]
     async fn member_removal_rules() {
         let db = test_pool().await;
-        let owner = signup(&db, "owner@example.com").await;
-        let team = personal_team(&db, &owner).await;
-        let code = current_invite(&db, &team, &owner.id).await.unwrap();
-        let a = signup(&db, "a@example.com").await;
-        let b = signup(&db, "b@example.com").await;
-        join_via_invite(&db, &code, &a.id).await.unwrap();
-        join_via_invite(&db, &code, &b.id).await.unwrap();
-        let tok = create_api_token(&db, &b.id, &team, Some("laptop")).await.unwrap();
-        assert!(authenticate_token(&db, &tok.token).await.unwrap().is_some());
+        let (team, owner, adam, mia, max) = team_with_roles(&db).await;
+        let eve = signup(&db, "eve@example.com").await;
+        join_via_invite(&db, &current_invite(&db, &team, &owner.id).await.unwrap(), &eve.id).await.unwrap();
+        set_role(&db, &team, &owner.id, &eve.id, "admin").await.unwrap();
 
-        assert!(matches!(remove_member(&db, &team, &a.id, &b.id).await, Err(AppError::Forbidden(_))), "member can't remove others");
-        assert!(matches!(remove_member(&db, &team, &owner.id, &owner.id).await, Err(AppError::Forbidden(_))), "owner can't leave");
-        assert!(matches!(remove_member(&db, &team, &a.id, &owner.id).await, Err(AppError::Forbidden(_))));
-        remove_member(&db, &team, &owner.id, &b.id).await.unwrap();
-        assert_eq!(member_role(&db, &team, &b.id).await.unwrap(), None);
-        assert!(authenticate_token(&db, &tok.token).await.unwrap().is_none(), "removed member's token stops working");
-        assert!(matches!(remove_member(&db, &team, &owner.id, &b.id).await, Err(AppError::NotFound(_))));
-        remove_member(&db, &team, &a.id, &a.id).await.unwrap();
+        let forbidden = |r: AppResult<()>| matches!(r, Err(AppError::Forbidden(_)));
+        assert!(forbidden(remove_member(&db, &team, &mia.id, &max.id).await), "member can't remove others");
+        assert!(forbidden(remove_member(&db, &team, &mia.id, &owner.id).await));
+        assert!(forbidden(remove_member(&db, &team, &adam.id, &eve.id).await), "admin can't remove an admin");
+        assert!(forbidden(remove_member(&db, &team, &adam.id, &owner.id).await), "admin can't remove the owner");
+        match remove_member(&db, &team, &owner.id, &owner.id).await {
+            Err(AppError::BadRequest(m)) => assert_eq!(m, "transfer ownership first"),
+            other => panic!("{other:?}"),
+        }
+        let outsider = signup(&db, "out@example.com").await;
+        assert!(forbidden(remove_member(&db, &team, &outsider.id, &max.id).await));
+        assert!(matches!(remove_member(&db, &team, &owner.id, &outsider.id).await, Err(AppError::NotFound(_))));
+
+        remove_member(&db, &team, &adam.id, &max.id).await.unwrap(); // admin removes a member
+        remove_member(&db, &team, &owner.id, &eve.id).await.unwrap(); // owner removes an admin
+        remove_member(&db, &team, &mia.id, &mia.id).await.unwrap(); // a member leaves
+        remove_member(&db, &team, &adam.id, &adam.id).await.unwrap(); // an admin leaves
         assert_eq!(list_members(&db, &team).await.unwrap().len(), 1);
+        let ev = event_data(&db, &team, "member_removed").await;
+        assert_eq!(ev.len(), 4);
+        assert_eq!((ev[0]["user"].as_str(), ev[0]["by"].as_str()), (Some("max"), Some("adam")));
+        assert_eq!((ev[2]["user"].as_str(), ev[2]["by"].as_str()), (Some("mia"), Some("mia")));
+    }
+
+    #[tokio::test]
+    async fn removal_revokes_tokens_and_frees_leases() {
+        use crate::domain::collab::{self, leases, tests::named_agent};
+        let db = test_pool().await;
+        let (team, owner, adam, mia, _max) = team_with_roles(&db).await;
+        let tok = create_api_token(&db, &mia.id, &team, Some("laptop")).await.unwrap();
+        let tok2 = create_api_token(&db, &mia.id, &team, None).await.unwrap();
+        assert!(authenticate_token(&db, &tok.token).await.unwrap().is_some());
+        // Mia's agent holds ci and waits on deploy; the owner's agent waits on ci.
+        let (_s1, mia_bot) = named_agent(&db, &team, &mia.id, "bot").await;
+        let (_s2, own_bot) = named_agent(&db, &team, &owner.id, "api").await;
+        leases::claim(&db, &mia_bot, None, "ci", None, None, false).await.unwrap();
+        leases::claim(&db, &own_bot, None, "deploy", None, None, false).await.unwrap();
+        leases::claim(&db, &mia_bot, None, "deploy", None, None, true).await.unwrap();
+        leases::claim(&db, &own_bot, None, "ci", None, None, true).await.unwrap();
+
+        remove_member(&db, &team, &adam.id, &mia.id).await.unwrap();
+        assert!(authenticate_token(&db, &tok.token).await.unwrap().is_none(), "removed member's token stops working");
+        let live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM api_tokens WHERE user_id = ? AND team_id = ? AND revoked_at IS NULL")
+            .bind(&mia.id)
+            .bind(&team)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(live, 0, "both tokens revoked ({})", tok2.id);
+
+        let v = leases::list(&db, &team).await.unwrap();
+        let held: Vec<(String, String)> = v.leases.iter().map(|l| (l.scope.clone(), l.holder.display.clone())).collect();
+        assert_eq!(held, vec![("ci".into(), "owner/api".into()), ("deploy".into(), "owner/api".into())]);
+        assert!(v.queue.is_empty(), "removed member's queue entries are dropped");
+        let pings = collab::take_agent_pings(&db, own_bot.agent_id.as_deref().unwrap()).await.unwrap();
+        assert!(pings.iter().any(|p| p.body.contains("you now hold ci")), "{pings:?}");
+        let ev = event_data(&db, &team, "lease_force_released").await;
+        assert_eq!((ev[0]["scope"].as_str(), ev[0]["by"].as_str()), (Some("ci"), Some("adam")));
+    }
+
+    #[tokio::test]
+    async fn transfer_ownership_rules_and_atomicity() {
+        let db = test_pool().await;
+        let (team, owner, adam, mia, _max) = team_with_roles(&db).await;
+        let outsider = signup(&db, "out@example.com").await;
+        async fn snapshot(db: &SqlitePool, team: &str) -> (Vec<(String, String)>, String) {
+            let roles: Vec<(String, String)> =
+                sqlx::query_as("SELECT user_id, role FROM memberships WHERE team_id = ? ORDER BY user_id").bind(team).fetch_all(db).await.unwrap();
+            let owner_id: String = sqlx::query_scalar("SELECT owner_id FROM teams WHERE id = ?").bind(team).fetch_one(db).await.unwrap();
+            (roles, owner_id)
+        }
+        let before = snapshot(&db, &team).await;
+
+        assert!(matches!(transfer_ownership(&db, &team, &adam.id, &mia.id).await, Err(AppError::Forbidden(_))), "admins can't");
+        assert!(matches!(transfer_ownership(&db, &team, &mia.id, &mia.id).await, Err(AppError::Forbidden(_))));
+        assert!(matches!(transfer_ownership(&db, &team, &owner.id, &outsider.id).await, Err(AppError::BadRequest(_))));
+        assert!(matches!(transfer_ownership(&db, &team, &owner.id, &owner.id).await, Err(AppError::BadRequest(_))));
+        assert_eq!(snapshot(&db, &team).await, before);
+
+        // A failure after the role swap (here: updating teams.owner_id) rolls everything back.
+        sqlx::query("CREATE TRIGGER fail_owner BEFORE UPDATE OF owner_id ON teams BEGIN SELECT RAISE(ABORT, 'boom'); END")
+            .execute(&db)
+            .await
+            .unwrap();
+        assert!(matches!(transfer_ownership(&db, &team, &owner.id, &mia.id).await, Err(AppError::Internal(_))));
+        assert_eq!(snapshot(&db, &team).await, before, "no partial transfer");
+        sqlx::query("DROP TRIGGER fail_owner").execute(&db).await.unwrap();
+
+        transfer_ownership(&db, &team, &owner.id, &mia.id).await.unwrap();
+        assert_eq!(member_role(&db, &team, &mia.id).await.unwrap(), Some(Role::Owner));
+        assert_eq!(member_role(&db, &team, &owner.id).await.unwrap(), Some(Role::Admin));
+        assert_eq!(get_team(&db, &team).await.unwrap().unwrap().owner_id, mia.id);
+        let owners: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memberships WHERE team_id = ? AND role = 'owner'")
+            .bind(&team)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(owners, 1);
+        let ev = event_data(&db, &team, "ownership_transferred").await;
+        assert_eq!((ev[0]["from"].as_str(), ev[0]["to"].as_str()), (Some("owner"), Some("mia")));
+
+        // The old owner is now an admin: can't transfer back, but can leave.
+        assert!(matches!(transfer_ownership(&db, &team, &owner.id, &owner.id).await, Err(AppError::Forbidden(_))));
+        // A second owner row is impossible.
+        let dup = sqlx::query("UPDATE memberships SET role = 'owner' WHERE team_id = ? AND user_id = ?")
+            .bind(&team)
+            .bind(&adam.id)
+            .execute(&db)
+            .await;
+        assert!(dup.is_err(), "unique owner index");
+        remove_member(&db, &team, &owner.id, &owner.id).await.unwrap();
+    }
+
+    /// Migration 0006 on a database built by 0001-0005 with data in it.
+    #[tokio::test]
+    async fn roles_migration_on_old_data() {
+        use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+        use std::str::FromStr;
+        let opts = SqliteConnectOptions::from_str("sqlite::memory:").unwrap().foreign_keys(true);
+        let db = SqlitePoolOptions::new().max_connections(1).connect_with(opts).await.unwrap();
+        let full = sqlx::migrate!("./migrations");
+        let mut old = sqlx::migrate!("./migrations");
+        old.migrations = old.migrations.iter().filter(|m| m.version < 6).cloned().collect::<Vec<_>>().into();
+        old.run(&db).await.unwrap();
+        for (id, h) in [("usr_o", "o"), ("usr_m", "m"), ("usr_x", "x")] {
+            sqlx::query("INSERT INTO users (id, email, handle, created_at) VALUES (?, ?, ?, 1)").bind(id).bind(format!("{h}@x.com")).bind(h).execute(&db).await.unwrap();
+        }
+        sqlx::query("INSERT INTO teams (id, name, owner_id, created_at) VALUES ('tm_1', 't', 'usr_o', 1), ('tm_2', 'u', 'usr_x', 1)").execute(&db).await.unwrap();
+        sqlx::query(
+            "INSERT INTO memberships (team_id, user_id, role, joined_at) VALUES \
+             ('tm_1', 'usr_o', 'owner', 10), ('tm_1', 'usr_m', 'member', 20), ('tm_2', 'usr_x', 'owner', 30), ('tm_2', 'usr_m', 'member', 40)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        assert!(sqlx::query("UPDATE memberships SET role = 'admin' WHERE user_id = 'usr_m'").execute(&db).await.is_err(), "old CHECK");
+        sqlx::query("INSERT INTO api_tokens (id, token_hash, prefix, user_id, team_id, label, created_at) VALUES ('tok_1', 'h', 'sb_', 'usr_m', 'tm_1', 'l', 1)")
+            .execute(&db)
+            .await
+            .unwrap();
+
+        full.run(&db).await.unwrap();
+        let rows: Vec<(String, String, String, i64)> =
+            sqlx::query_as("SELECT team_id, user_id, role, joined_at FROM memberships ORDER BY joined_at").fetch_all(&db).await.unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("tm_1".into(), "usr_o".into(), "owner".into(), 10),
+                ("tm_1".into(), "usr_m".into(), "member".into(), 20),
+                ("tm_2".into(), "usr_x".into(), "owner".into(), 30),
+                ("tm_2".into(), "usr_m".into(), "member".into(), 40),
+            ]
+        );
+        let idx: Vec<String> = sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'memberships' AND sql IS NOT NULL ORDER BY name")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+        assert_eq!(idx, vec!["memberships_one_owner", "memberships_user"]);
+        let fk_problems: Vec<(String,)> = sqlx::query_as("SELECT \"table\" FROM pragma_foreign_key_check").fetch_all(&db).await.unwrap();
+        assert!(fk_problems.is_empty(), "{fk_problems:?}");
+        // New CHECK accepts admin, still rejects junk; the app reads the migrated rows.
+        sqlx::query("UPDATE memberships SET role = 'admin' WHERE team_id = 'tm_1' AND user_id = 'usr_m'").execute(&db).await.unwrap();
+        assert!(sqlx::query("UPDATE memberships SET role = 'boss' WHERE user_id = 'usr_m'").execute(&db).await.is_err());
+        assert_eq!(member_role(&db, "tm_1", "usr_m").await.unwrap(), Some(Role::Admin));
+        assert_eq!(list_user_teams(&db, "usr_m").await.unwrap().len(), 2);
+        // FKs survived the rebuild: deleting a team cascades to its memberships.
+        sqlx::query("DELETE FROM api_tokens").execute(&db).await.unwrap();
+        sqlx::query("DELETE FROM teams WHERE id = 'tm_2'").execute(&db).await.unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memberships WHERE team_id = 'tm_2'").fetch_one(&db).await.unwrap();
+        assert_eq!(n, 0);
     }
 
     #[tokio::test]

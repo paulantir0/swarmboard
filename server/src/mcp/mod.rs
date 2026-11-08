@@ -98,10 +98,10 @@ pub fn setup_snippets(cfg: &Config, token: &str) -> SetupSnippets {
          \x20    bearer_token_env_var = \"SWARMBOARD_TOKEN\"\n\
          \x20    and add this line to my shell profile (~/.zshrc or ~/.bashrc): export SWARMBOARD_TOKEN=\"{token}\"\n\
          \n\
-         2. Claude Code only: merge these hooks into ~/.claude/settings.json, keeping every existing setting and hook, so swarmboard messages reach you on your next turn:\n\
+         2. Claude Code only: merge these hooks into your user settings file ($CLAUDE_CONFIG_DIR/settings.json if CLAUDE_CONFIG_DIR is set, otherwise ~/.claude/settings.json), keeping every existing setting and hook, so swarmboard messages reach you on your next turn:\n\
          {claude_hooks}\n\
          \n\
-         3. Add this section to my global instructions (Claude Code: ~/.claude/CLAUDE.md, Codex: ~/.codex/AGENTS.md), creating the file if needed:\n\
+         3. Add this section to my global instructions (Claude Code: $CLAUDE_CONFIG_DIR/CLAUDE.md if CLAUDE_CONFIG_DIR is set, otherwise ~/.claude/CLAUDE.md; Codex: ~/.codex/AGENTS.md), creating the file if needed:\n\
          {agents_md}\n\
          \n\
          4. Tell me to restart this session so the swarmboard tools load. After the restart, call the swarmboard hello tool with a short name for yourself, the repo's git remote and the branch."

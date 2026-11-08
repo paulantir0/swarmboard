@@ -2,7 +2,7 @@
 
 use axum::{
     extract::State,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 
 use super::extract::{JsonBody, JsonOrEmpty, PathParam};
 use crate::{
-    auth::{require_member, require_owner, CurrentUser},
+    auth::{require_admin, require_member, CurrentUser},
     config::MAX_TEAM_MEMBERS,
     domain::accounts,
     error::{AppError, AppResult},
@@ -22,7 +22,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/me", get(get_me).patch(patch_me))
         .route("/api/teams/{tid}", get(get_team).patch(patch_team))
         .route("/api/teams/{tid}/invite", post(rotate_invite))
-        .route("/api/teams/{tid}/members/{uid}", delete(remove_member))
+        .route("/api/teams/{tid}/members/{uid}", patch(patch_member).delete(remove_member))
+        .route("/api/teams/{tid}/transfer", post(transfer))
         .route("/api/invites/{code}", get(invite_info))
         .route("/api/invites/{code}/accept", post(accept_invite))
         .route("/api/teams/{tid}/tokens", get(list_tokens).post(create_token))
@@ -81,7 +82,7 @@ async fn patch_team(
     PathParam(tid): PathParam<String>,
     JsonBody(body): JsonBody<PatchTeam>,
 ) -> AppResult<Json<Value>> {
-    require_owner(&state, &tid, &user.id).await?;
+    require_admin(&state, &tid, &user.id).await?;
     let team = match body.name {
         Some(name) => accounts::rename_team(&state.db, &tid, &name).await?,
         None => accounts::get_team(&state.db, &tid).await?.ok_or_else(|| AppError::NotFound("team not found".into()))?,
@@ -90,7 +91,7 @@ async fn patch_team(
 }
 
 async fn rotate_invite(State(state): State<AppState>, CurrentUser(user): CurrentUser, PathParam(tid): PathParam<String>) -> AppResult<Json<Value>> {
-    require_member(&state, &tid, &user.id).await?;
+    require_admin(&state, &tid, &user.id).await?;
     let code = accounts::rotate_invite(&state.db, &tid, &user.id).await?;
     let url = accounts::invite_url(&state.cfg, &code);
     Ok(Json(json!({ "code": code, "url": url })))
@@ -102,6 +103,37 @@ async fn remove_member(
     PathParam((tid, uid)): PathParam<(String, String)>,
 ) -> AppResult<Json<Value>> {
     accounts::remove_member(&state.db, &tid, &user.id, &uid).await?;
+    Ok(ok())
+}
+
+#[derive(Deserialize)]
+struct PatchMember {
+    role: String,
+}
+
+/// Owner only: `{role: "admin" | "member"}` -> the member.
+async fn patch_member(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    PathParam((tid, uid)): PathParam<(String, String)>,
+    JsonBody(body): JsonBody<PatchMember>,
+) -> AppResult<Json<accounts::Member>> {
+    Ok(Json(accounts::set_role(&state.db, &tid, &user.id, &uid, &body.role).await?))
+}
+
+#[derive(Deserialize)]
+struct Transfer {
+    user_id: String,
+}
+
+/// Owner only: the member becomes owner, the previous owner becomes admin.
+async fn transfer(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    PathParam(tid): PathParam<String>,
+    JsonBody(body): JsonBody<Transfer>,
+) -> AppResult<Json<Value>> {
+    accounts::transfer_ownership(&state.db, &tid, &user.id, &body.user_id).await?;
     Ok(ok())
 }
 

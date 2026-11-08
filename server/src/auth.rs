@@ -197,12 +197,13 @@ pub async fn require_member(state: &AppState, team_id: &str, user_id: &str) -> A
         .ok_or_else(|| AppError::Forbidden("not a member of this team".into()))
 }
 
-/// Like `require_member`, but only the owner passes.
-pub async fn require_owner(state: &AppState, team_id: &str, user_id: &str) -> AppResult<()> {
-    match require_member(state, team_id, user_id).await? {
-        Role::Owner => Ok(()),
-        Role::Member => Err(AppError::Forbidden("only the team owner can do that".into())),
+/// Like `require_member`, but only the owner or an admin passes.
+pub async fn require_admin(state: &AppState, team_id: &str, user_id: &str) -> AppResult<Role> {
+    let role = require_member(state, team_id, user_id).await?;
+    if !role.is_admin() {
+        return Err(AppError::Forbidden("only the team owner or an admin can do that".into()));
     }
+    Ok(role)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -462,6 +463,104 @@ mod tests {
         assert!(set_cookie(&res).contains("Max-Age=0"));
         let res = app.clone().oneshot(me(Some(session))).await.unwrap();
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "session deleted on logout");
+    }
+
+    /// Who may call which team-admin route, end to end through the router.
+    #[tokio::test]
+    async fn role_route_matrix() {
+        let state = test_state().await;
+        let app = crate::app(state.clone());
+        let db = &state.db;
+        let (owner, _) = accounts::find_or_create_user(db, "owner@example.com").await.unwrap();
+        let tid = accounts::list_user_teams(db, &owner.id).await.unwrap()[0].id.clone();
+        let code = accounts::current_invite(db, &tid, &owner.id).await.unwrap();
+        let mut ids = vec![];
+        for h in ["adam", "mia", "max"] {
+            let (u, _) = accounts::find_or_create_user(db, &format!("{h}@example.com")).await.unwrap();
+            accounts::join_via_invite(db, &code, &u.id).await.unwrap();
+            ids.push(u.id);
+        }
+        let (adam, mia, max) = (ids[0].clone(), ids[1].clone(), ids[2].clone());
+        let cookie = |uid: &str| {
+            let (db, uid) = (db.clone(), uid.to_string());
+            async move { format!("sb_session={}", accounts::create_session(&db, &uid).await.unwrap()) }
+        };
+        let (c_owner, c_adam, c_mia) = (cookie(&owner.id).await, cookie(&adam).await, cookie(&mia).await);
+        let call = |method: &str, uri: String, cookie: &str, body: Value| {
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header(header::COOKIE, cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let send = |req: Request<Body>| {
+            let app = app.clone();
+            async move {
+                let res = app.oneshot(req).await.unwrap();
+                let status = res.status();
+                (status, body_json(res).await)
+            }
+        };
+
+        // Roles: owner only.
+        let (st, b) = send(call("PATCH", format!("/api/teams/{tid}/members/{adam}"), &c_mia, json!({"role": "admin"}))).await;
+        assert_eq!((st, b["error"].as_str()), (StatusCode::FORBIDDEN, Some("forbidden")));
+        let (st, b) = send(call("PATCH", format!("/api/teams/{tid}/members/{adam}"), &c_owner, json!({"role": "admin"}))).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!((b["user_id"].as_str(), b["role"].as_str(), b["handle"].as_str()), (Some(adam.as_str()), Some("admin"), Some("adam")));
+        let (st, _) = send(call("PATCH", format!("/api/teams/{tid}/members/{mia}"), &c_adam, json!({"role": "admin"}))).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "admins can't change roles");
+        let (st, b) = send(call("PATCH", format!("/api/teams/{tid}/members/{}", owner.id), &c_owner, json!({"role": "member"}))).await;
+        assert_eq!((st, b["error"].as_str()), (StatusCode::BAD_REQUEST, Some("bad_request")));
+
+        // GET shows roles and the invite to everyone.
+        let (st, b) = send(Request::get(format!("/api/teams/{tid}")).header(header::COOKIE, &c_mia).body(Body::empty()).unwrap()).await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(b["invite"]["url"].as_str().unwrap().contains("/join/"));
+        assert!(b["members"].as_array().unwrap().iter().any(|m| m["handle"] == "adam" && m["role"] == "admin"));
+        let (_, b) = send(Request::get("/api/me").header(header::COOKIE, &c_adam).body(Body::empty()).unwrap()).await;
+        assert!(b["teams"].as_array().unwrap().iter().any(|t| t["id"] == tid.as_str() && t["role"] == "admin"));
+
+        // Rename + rotate: owner or admin.
+        for (c, want) in [(&c_mia, StatusCode::FORBIDDEN), (&c_adam, StatusCode::OK), (&c_owner, StatusCode::OK)] {
+            assert_eq!(send(call("PATCH", format!("/api/teams/{tid}"), c, json!({"name": "crew"}))).await.0, want);
+            assert_eq!(send(call("POST", format!("/api/teams/{tid}/invite"), c, json!({}))).await.0, want);
+        }
+
+        // Force release: owner or admin; 404 when nothing is held.
+        let (st, _) = send(call("POST", format!("/api/teams/{tid}/claims/release"), &c_mia, json!({"scope": "ci"}))).await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+        let (st, b) = send(call("POST", format!("/api/teams/{tid}/claims/release"), &c_adam, json!({"scope": "ci"}))).await;
+        assert_eq!((st, b["error"].as_str()), (StatusCode::NOT_FOUND, Some("not_found")));
+        let (_s, bot) = crate::domain::collab::tests::named_agent(db, &tid, &mia, "bot").await;
+        crate::domain::collab::leases::claim(db, &bot, None, "ci", None, None, false).await.unwrap();
+        let (st, b) = send(call("POST", format!("/api/teams/{tid}/claims/release"), &c_adam, json!({"scope": "ci"}))).await;
+        assert_eq!((st, b), (StatusCode::OK, json!({"ok": true, "released": 1})));
+
+        // Removal.
+        let (st, _) = send(call("DELETE", format!("/api/teams/{tid}/members/{max}"), &c_mia, json!({}))).await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+        let (st, _) = send(call("DELETE", format!("/api/teams/{tid}/members/{}", owner.id), &c_adam, json!({}))).await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+        let (st, b) = send(call("DELETE", format!("/api/teams/{tid}/members/{}", owner.id), &c_owner, json!({}))).await;
+        assert_eq!((st, b["message"].as_str()), (StatusCode::BAD_REQUEST, Some("transfer ownership first")));
+        let (st, b) = send(call("DELETE", format!("/api/teams/{tid}/members/{max}"), &c_adam, json!({}))).await;
+        assert_eq!((st, b), (StatusCode::OK, json!({"ok": true})));
+
+        // Transfer: owner only, to a member.
+        let (st, _) = send(call("POST", format!("/api/teams/{tid}/transfer"), &c_adam, json!({"user_id": mia}))).await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+        let (st, _) = send(call("POST", format!("/api/teams/{tid}/transfer"), &c_owner, json!({"user_id": max}))).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "max was removed");
+        let (st, b) = send(call("POST", format!("/api/teams/{tid}/transfer"), &c_owner, json!({"user_id": mia}))).await;
+        assert_eq!((st, b), (StatusCode::OK, json!({"ok": true})));
+        let (_, b) = send(Request::get(format!("/api/teams/{tid}")).header(header::COOKIE, &c_mia).body(Body::empty()).unwrap()).await;
+        assert_eq!(b["team"]["owner_id"], mia.as_str());
+        assert_eq!(b["members"][0]["handle"], "mia");
+        let (st, _) = send(call("DELETE", format!("/api/teams/{tid}/members/{}", owner.id), &c_owner, json!({}))).await;
+        assert_eq!(st, StatusCode::OK, "former owner (now admin) can leave");
     }
 
     #[tokio::test]
