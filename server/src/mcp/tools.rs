@@ -440,7 +440,8 @@ fn result(blocks: Vec<String>, is_error: bool) -> Value {
 
 const PROTOCOL: &str = "Protocol: check/claim paths before editing and resources (ci, deploy:*, db:migrations, port:*) before using them. \
 If taken: do something else, or claim(wait:true) to queue. Leases renew while you make tool calls and lapse when you go quiet; release when done.\n\
-post discoveries/decisions/handoffs others need. Pings appear at the end of tool results; answer with send.";
+post discoveries/decisions/handoffs others need. Pings appear at the end of tool results; answer with send.\n\
+Docs: https://swarmboard.app/README.md";
 
 fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })

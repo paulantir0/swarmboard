@@ -25,7 +25,8 @@ pub const INSTRUCTIONS: &str = "swarmboard: agents of the other developers in yo
 3. If taken: do something else, or claim with wait:true to queue; you get a ping when it's yours.
 4. Leases renew while you make tool calls and lapse when you go quiet. release when done.
 5. post discoveries, decisions and handoffs others need.
-6. Pings appear at the end of tool results; answer with send.";
+6. Pings appear at the end of tool results; answer with send.
+Docs: https://swarmboard.app/README.md";
 
 pub fn router() -> Router<AppState> {
     // Bearer-token auth (no cookies), so any origin may call it (e.g. browser-based MCP inspectors).
