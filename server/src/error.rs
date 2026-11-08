@@ -21,6 +21,8 @@ pub enum AppError {
     Conflict(String),
     #[error("slow down")]
     TooManyRequests,
+    #[error("{0}")]
+    RateLimited(&'static str),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -33,7 +35,7 @@ impl AppError {
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Conflict(_) => StatusCode::CONFLICT,
-            AppError::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
+            AppError::TooManyRequests | AppError::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -44,7 +46,7 @@ impl AppError {
             AppError::Forbidden(_) => "forbidden",
             AppError::NotFound(_) => "not_found",
             AppError::Conflict(_) => "conflict",
-            AppError::TooManyRequests => "rate_limited",
+            AppError::TooManyRequests | AppError::RateLimited(_) => "rate_limited",
             AppError::Internal(_) => "internal",
         }
     }

@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use sqlx::{FromRow, SqliteExecutor, SqlitePool};
 
 use crate::{
+    auth::RateLimiter,
     error::{AppError, AppResult},
     models::{
         Activity, Actor, Agent, Author, Board, Comment, FileInfo, NewPost, Ping, PingSent, Post, PostDetail, PostFilter,
@@ -21,6 +22,13 @@ use crate::{
 
 /// Max stored file size.
 pub const MAX_FILE_BYTES: usize = 10 * 1024 * 1024;
+/// Max total bytes stored per team.
+pub const TEAM_STORAGE_BYTES: i64 = 200 * 1024 * 1024;
+/// Server-wide safety valve: max total bytes stored across all teams.
+pub const GLOBAL_STORAGE_BYTES: i64 = 5 * 1024 * 1024 * 1024;
+/// Uploads allowed per user per window.
+const UPLOAD_LIMIT: usize = 60;
+const UPLOAD_WINDOW_MS: i64 = 15 * 60 * 1000;
 /// Statuses that count as "open" work (`status: "active"`).
 pub const ACTIVE_STATUSES: &[&str] = &["open", "in_progress", "blocked"];
 const MAX_TITLE: usize = 200;
@@ -1962,6 +1970,8 @@ pub async fn save_file(state: &AppState, actor: &Actor, filename: &str, content_
     if bytes.len() > MAX_FILE_BYTES {
         return Err(bad(format!("file is {:.1} MB; max is 10 MB", bytes.len() as f64 / 1_048_576.0)));
     }
+    check_upload_rate(&UPLOAD_LIMITER, &actor.user_id, now_ms())?;
+    check_storage_quota(&state.db, &actor.team_id, bytes.len() as i64).await?;
     let filename = sanitize_filename(filename);
     let content_type = normalize_content_type(content_type, &filename);
     let id = random_token(24);
@@ -1989,6 +1999,31 @@ pub async fn save_file(state: &AppState, actor: &Actor, filename: &str, content_
         content_type,
         size: bytes.len() as i64,
     })
+}
+
+static UPLOAD_LIMITER: std::sync::LazyLock<RateLimiter> = std::sync::LazyLock::new(RateLimiter::new);
+
+/// Per-user upload rate limit, shared by every upload path (REST, MCP, `PUT /u/<code>`).
+fn check_upload_rate(limiter: &RateLimiter, user_id: &str, now: i64) -> AppResult<()> {
+    if limiter.allow(&format!("upload:{user_id}"), UPLOAD_LIMIT, UPLOAD_WINDOW_MS, now) {
+        Ok(())
+    } else {
+        Err(AppError::RateLimited("slow down: upload limit"))
+    }
+}
+
+/// Rejects an upload of `new_bytes` that would push the team (or the whole server) over its storage cap.
+async fn check_storage_quota(db: &SqlitePool, team_id: &str, new_bytes: i64) -> AppResult<()> {
+    let (team_used,): (i64,) =
+        sqlx::query_as("SELECT COALESCE(SUM(size), 0) FROM files WHERE team_id = ?1").bind(team_id).fetch_one(db).await?;
+    if team_used + new_bytes > TEAM_STORAGE_BYTES {
+        return Err(bad("team storage limit (200 MB) reached"));
+    }
+    let (total_used,): (i64,) = sqlx::query_as("SELECT COALESCE(SUM(size), 0) FROM files").fetch_one(db).await?;
+    if total_used + new_bytes > GLOBAL_STORAGE_BYTES {
+        return Err(bad("server storage is full; uploads are temporarily disabled"));
+    }
+    Ok(())
 }
 
 /// (filename, content_type, size) of a stored file.
@@ -2551,5 +2586,60 @@ pub(crate) mod tests {
         assert_eq!(normalize_content_type(Some("image/svg+xml"), "a.png"), "image/svg+xml");
         assert_eq!(normalize_content_type(Some("bad\nheader"), "a.txt"), "text/plain; charset=utf-8");
         assert_eq!(slugify("  UI__Fixer!! "), "ui-fixer");
+    }
+
+    async fn insert_file(db: &SqlitePool, team: &str, user: &str, size: i64) {
+        sqlx::query(
+            "INSERT INTO files (id, team_id, uploader_user_id, uploader_agent_id, filename, content_type, size, created_at)
+             VALUES (?1, ?2, ?3, NULL, 'f', 'text/plain', ?4, 0)",
+        )
+        .bind(random_token(24))
+        .bind(team)
+        .bind(user)
+        .bind(size)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    async fn add_team(db: &SqlitePool, owner: &str) -> String {
+        let team = new_id("tm");
+        sqlx::query("INSERT INTO teams (id, name, owner_id, created_at) VALUES (?1, 'other', ?2, 0)")
+            .bind(team.as_str())
+            .bind(owner)
+            .execute(db)
+            .await
+            .unwrap();
+        team
+    }
+
+    #[tokio::test]
+    async fn storage_quota() {
+        let f = fixture().await;
+        let other = add_team(&f.db, &f.paul).await;
+        let third = add_team(&f.db, &f.paul).await;
+        check_storage_quota(&f.db, &f.team, 10).await.unwrap();
+        insert_file(&f.db, &f.team, &f.paul, TEAM_STORAGE_BYTES - 10).await;
+        check_storage_quota(&f.db, &f.team, 10).await.expect("exactly at the cap is fine");
+        let err = check_storage_quota(&f.db, &f.team, 11).await.unwrap_err();
+        assert!(matches!(&err, AppError::BadRequest(m) if m == "team storage limit (200 MB) reached"), "{err}");
+        // Other teams are unaffected until the global cap is hit.
+        check_storage_quota(&f.db, &other, MAX_FILE_BYTES as i64).await.unwrap();
+        insert_file(&f.db, &other, &f.paul, GLOBAL_STORAGE_BYTES - TEAM_STORAGE_BYTES + 10).await;
+        let err = check_storage_quota(&f.db, &third, 1).await.unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)), "global cap applies");
+    }
+
+    #[test]
+    fn upload_rate_limit() {
+        let rl = RateLimiter::new();
+        for i in 0..UPLOAD_LIMIT as i64 {
+            check_upload_rate(&rl, "usr_a", 1_000 + i).unwrap();
+        }
+        let err = check_upload_rate(&rl, "usr_a", 2_000).unwrap_err();
+        assert_eq!(err.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(err.to_string(), "slow down: upload limit");
+        check_upload_rate(&rl, "usr_b", 2_000).expect("per-user");
+        check_upload_rate(&rl, "usr_a", 1_000 + UPLOAD_WINDOW_MS).expect("window slides");
     }
 }
