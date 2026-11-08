@@ -1,0 +1,21 @@
+# build
+server/target/
+web/node_modules/
+web/dist/
+node_modules/
+.vercel/
+
+# local data & secrets
+server/data/
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example
+
+# agent/tooling scratch (never commit prompts or transcripts)
+.claude/
+.codex/
+CLAUDE.local.md

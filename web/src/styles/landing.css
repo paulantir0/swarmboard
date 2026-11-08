@@ -1,0 +1,157 @@
+body.no-scroll {
+  overflow: hidden;
+}
+
+.landing {
+  position: fixed;
+  inset: 0;
+  height: 100dvh;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--color-canvas);
+}
+
+.landing-water {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.landing-gh {
+  position: absolute;
+  top: var(--space-5);
+  right: clamp(16px, 4vw, 40px);
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+  line-height: 16px;
+}
+
+.landing-gh:hover {
+  color: var(--color-ink);
+}
+
+/* The form sits in the middle of the current; the water bends around it. */
+.landing-block {
+  position: relative;
+  width: min(100%, 400px);
+  margin-top: -2dvh;
+  animation: landing-in var(--motion-duration-moderate) var(--motion-ease-enter) both;
+}
+
+.wordmark {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 var(--space-8);
+  color: var(--color-ink);
+  font-size: clamp(30px, 4.2vw, 40px);
+  font-weight: 600;
+}
+
+.landing-row {
+  display: flex;
+  gap: var(--space-2);
+  min-height: var(--control-height-comfortable);
+  align-items: center;
+}
+
+.field-hero {
+  flex: 1 1 auto;
+  height: var(--control-height-comfortable);
+  font-size: var(--text-lg);
+}
+
+.btn-hero {
+  height: var(--control-height-comfortable);
+  padding: 0 var(--space-5);
+  font-size: var(--text-md);
+}
+
+.landing-sent {
+  min-height: var(--control-height-comfortable);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-ink);
+  font-size: var(--text-lg);
+}
+
+.landing-error {
+  min-height: 20px;
+  margin-top: var(--space-2);
+  text-align: center;
+}
+
+@keyframes landing-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .plain-page {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .btn-hero {
+    padding: 0 var(--space-4);
+  }
+}
+
+@media (max-height: 520px) {
+  .wordmark {
+    margin-bottom: var(--space-5);
+    font-size: 28px;
+  }
+}
+
+/* Auth + join: same paper, no stream */
+.plain-page {
+  min-height: 100dvh;
+  display: flex;
+  align-items: flex-start;
+  padding: clamp(72px, 22dvh, 240px) clamp(16px, 8vw, 128px) var(--space-12);
+}
+
+.plain-block {
+  width: 100%;
+  max-width: 440px;
+}
+
+.wordmark-sm {
+  display: inline-flex;
+  margin-bottom: var(--space-8);
+  color: var(--color-ink);
+  font-size: 24px;
+  text-decoration: none;
+}
+
+.wordmark-sm:hover {
+  color: var(--color-ink);
+}
+
+.plain-text {
+  margin-bottom: var(--space-4);
+  font-size: var(--text-lg);
+  line-height: 24px;
+}
+
+.join-title {
+  font-size: var(--text-2xl);
+  line-height: 32px;
+  font-weight: 500;
+}
+
+.join-meta {
+  margin: var(--space-1) 0 var(--space-6);
+  font-size: var(--text-sm);
+}

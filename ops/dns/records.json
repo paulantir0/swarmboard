@@ -1,0 +1,48 @@
+{
+  "domain": "swarmboard.app",
+  "ttl": 600,
+  "records": [
+    {
+      "type": "A",
+      "name": "",
+      "content": "76.76.21.21",
+      "note": "Vercel (web, apex)"
+    },
+    {
+      "type": "CNAME",
+      "name": "www",
+      "content": "cname.vercel-dns.com",
+      "note": "Vercel (www)"
+    },
+    {
+      "type": "A",
+      "name": "api",
+      "content": "46.225.177.152",
+      "note": "Hetzner 0phone-runtime, Caddy terminates TLS"
+    },
+    {
+      "type": "CNAME",
+      "name": "send",
+      "content": "send.forge.rmta.net",
+      "note": "Resend (Forge) return path + SPF"
+    },
+    {
+      "type": "CNAME",
+      "name": "rsend",
+      "content": "rsend.forge.rmta.net",
+      "note": "Resend (Forge) sending"
+    },
+    {
+      "type": "TXT",
+      "name": "resend._domainkey",
+      "content": "p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCvWM2BnrObs1N+TbZa2Xx7JTfoSHi3fEtAyDHFVw9vGvOao04/wKMm7jk2T416bCxmfQhEitxwDvTd9pVJ/Z7bSVXMVo6XpU+o3TZuojDZ8a5bddttDYTWM9QyZKyh+JdDudV+5pVqwTRbA2xyC1RnGA7r03K1yJ6aJNN0sUCXtwIDAQAB",
+      "note": "Resend DKIM (public key)"
+    },
+    {
+      "type": "TXT",
+      "name": "_dmarc",
+      "content": "v=DMARC1; p=none;",
+      "note": "DMARC, monitor only"
+    }
+  ]
+}

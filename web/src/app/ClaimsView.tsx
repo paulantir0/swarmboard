@@ -1,0 +1,115 @@
+import { api, ApiError, type Claims, type Lease } from '../api'
+import { Who } from '../components/Marks'
+import { ago, fullDate } from '../lib/time'
+import { usePoll } from '../lib/usePoll'
+import { useShell } from './context'
+import { ViewHeader } from './ViewHeader'
+
+const EMPTY: Claims = { leases: [], queue: [] }
+
+/** Server timestamps are ms; tolerate seconds. */
+const ms = (v: number) => (v < 1e12 ? v * 1000 : v)
+
+function expiresIn(at: number, now: number): string {
+  const s = Math.round((ms(at) - now) / 1000)
+  if (s <= 0) return 'expired'
+  if (s < 60) return `expires in ${s}s`
+  const m = Math.round(s / 60)
+  if (m < 60) return `expires in ${m}m`
+  return `expires in ${Math.floor(m / 60)}h ${m % 60}m`
+}
+
+function waited(at: number, now: number): string {
+  const a = ago(ms(at), now)
+  return a === 'now' ? 'just queued' : `waiting ${a}`
+}
+
+function byRepo(leases: Lease[]): [string, Lease[]][] {
+  const groups = new Map<string, Lease[]>()
+  for (const l of leases) {
+    const list = groups.get(l.repo) ?? []
+    list.push(l)
+    groups.set(l.repo, list)
+  }
+  for (const list of groups.values()) list.sort((a, b) => a.scope.localeCompare(b.scope))
+  // Repos alphabetically, team-wide ("") last.
+  return [...groups.entries()].sort(([a], [b]) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
+}
+
+export function ClaimsView() {
+  const { teamId, me } = useShell()
+  const claims = usePoll(() => api.claims(teamId), [teamId])
+  // The endpoint may not exist on older servers: treat a 404 as "nothing held".
+  const missing = claims.error instanceof ApiError && claims.error.status === 404
+  const data = claims.data ?? (missing ? EMPTY : undefined)
+  const leases = data?.leases ?? []
+  const queue = [...(data?.queue ?? [])].sort((a, b) => a.scope.localeCompare(b.scope) || a.position - b.position)
+  const now = Date.now()
+
+  return (
+    <div className="view">
+      <ViewHeader
+        title={
+          <>
+            Claims <span className="view-count mono">{leases.length ? `${leases.length} held` : ''}</span>
+          </>
+        }
+      />
+      {!data ? (
+        <div className="empty">{claims.error ? <p className="muted">{claims.error.message}</p> : null}</div>
+      ) : leases.length === 0 && queue.length === 0 ? (
+        <div className="empty">
+          <p className="muted">No claims</p>
+        </div>
+      ) : (
+        <div className="claims">
+          {byRepo(leases).map(([repo, list]) => (
+            <section key={repo || '-'} aria-label={repo || 'Team-wide'}>
+              <h2 className="claims-head">
+                <span className={repo ? 'mono' : ''}>{repo || 'Team-wide'}</span>
+                <span className="group-count">{list.length}</span>
+              </h2>
+              {list.map((l) => (
+                <div key={`${l.repo}:${l.scope}`} className="claim-row">
+                  <span className="cl-scope mono" title={l.kind ? `${l.kind}: ${l.scope}` : l.scope}>
+                    {l.scope}
+                  </span>
+                  <span className="cl-who">
+                    <Who author={l.holder} me={me.user.id} />
+                  </span>
+                  <span className="cl-note">{l.note || <span className="muted">—</span>}</span>
+                  <span className="cl-time mono muted" title={fullDate(ms(l.expires_at))}>
+                    {expiresIn(l.expires_at, now)}
+                  </span>
+                </div>
+              ))}
+            </section>
+          ))}
+          {queue.length ? (
+            <section aria-label="Queue">
+              <h2 className="claims-head">
+                <span>Queue</span>
+                <span className="group-count">{queue.length}</span>
+              </h2>
+              {queue.map((w) => (
+                <div key={`${w.repo}:${w.scope}:${w.position}:${w.waiter.display}`} className="claim-row">
+                  <span className="cl-scope mono" title={w.repo || 'Team-wide'}>
+                    <span className="cl-pos">{w.position}</span>
+                    {w.scope}
+                  </span>
+                  <span className="cl-who">
+                    <Who author={w.waiter} me={me.user.id} />
+                  </span>
+                  <span className="cl-note mono muted">{w.repo || 'team-wide'}</span>
+                  <span className="cl-time mono muted" title={fullDate(ms(w.created_at))}>
+                    {waited(w.created_at, now)}
+                  </span>
+                </div>
+              ))}
+            </section>
+          ) : null}
+        </div>
+      )}
+    </div>
+  )
+}

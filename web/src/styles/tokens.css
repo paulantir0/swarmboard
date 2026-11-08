@@ -1,0 +1,282 @@
+/*
+ * swarmboard tokens, ported from the IndexerLabs design system
+ * (design-system/color-tokens.css + interaction-tokens.css).
+ * The only file in web/ that holds raw color values.
+ */
+
+/* Swarm Mono: the brand mono (wordmark, ids, code, agent names, the landing water). */
+@font-face {
+  font-family: 'Swarm Mono';
+  src: url('/fonts/swarm-mono-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Swarm Mono';
+  src: url('/fonts/swarm-mono-600.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+
+  /* Paper and ink primitives */
+  --palette-paper: #ffffff;
+  --palette-paper-rgb: 255, 255, 255;
+  --palette-paper-soft: #fafafa;
+  --palette-paper-recessed: #f3f3f3;
+  --palette-ink: #111111;
+  --palette-ink-rgb: 17, 17, 17;
+  --palette-ink-secondary: #3f3f3f;
+  --palette-ink-muted: #666666;
+  --palette-rule: #e5e5e5;
+  --palette-rule-strong: #c9c2b7;
+  --palette-blue: #2c4a7c;
+  --palette-blue-rgb: 44, 74, 124;
+  --palette-blue-hover: #243f69;
+  --palette-blue-pressed: #1d355c;
+  --palette-blue-wash: #e8eef6;
+  --palette-focus: #0969da;
+  --palette-focus-rgb: 9, 105, 218;
+
+  /* Warm-dark primitives */
+  --palette-dark-canvas: #11110f;
+  --palette-dark-surface: #1b1a17;
+  --palette-dark-raised: #242a34;
+  --palette-dark-recessed: #151512;
+  --palette-dark-ink: #f2eee6;
+  --palette-dark-ink-rgb: 242, 238, 230;
+  --palette-dark-secondary: #d8d2c8;
+  --palette-dark-muted: #b8b0a4;
+  --palette-dark-rule: #34312b;
+  --palette-dark-rule-strong: #5a554b;
+  --palette-dark-blue: #9db9ea;
+  --palette-dark-blue-rgb: 157, 185, 234;
+  --palette-dark-blue-hover: #cad8f0;
+  --palette-dark-blue-pressed: #e1e8f5;
+  --palette-dark-focus: #75b7ff;
+  --palette-dark-focus-rgb: 117, 183, 255;
+
+  /* Feedback primitives */
+  --palette-success: #166534;
+  --palette-success-surface: #f0fdf4;
+  --palette-success-border: #bbf7d0;
+  --palette-warning: #92400e;
+  --palette-warning-surface: #fff7ed;
+  --palette-warning-border: #fed7aa;
+  --palette-danger: #b42318;
+  --palette-danger-text: #991b1b;
+  --palette-danger-surface: #fef2f2;
+  --palette-danger-border: #fecaca;
+
+  --palette-dark-success: #9be5a6;
+  --palette-dark-success-surface: rgba(46, 125, 50, 0.16);
+  --palette-dark-success-border: rgba(115, 200, 125, 0.36);
+  --palette-dark-warning: #f6c177;
+  --palette-dark-warning-surface: rgba(184, 122, 25, 0.16);
+  --palette-dark-warning-border: rgba(246, 193, 119, 0.34);
+  --palette-dark-danger: #ffb4a8;
+  --palette-dark-danger-surface: rgba(185, 28, 28, 0.18);
+  --palette-dark-danger-border: rgba(255, 130, 112, 0.34);
+
+  /* Semantic roles: light */
+  --color-canvas: var(--palette-paper);
+  --color-surface: var(--palette-paper-soft);
+  --color-surface-raised: var(--palette-paper);
+  --color-surface-recessed: var(--palette-paper-recessed);
+  --color-ink: var(--palette-ink);
+  --color-ink-rgb: var(--palette-ink-rgb);
+  --color-ink-secondary: var(--palette-ink-secondary);
+  --color-ink-muted: var(--palette-ink-muted);
+  --color-border: var(--palette-rule);
+  --color-border-strong: var(--palette-rule-strong);
+  --color-brand-action: var(--palette-blue);
+  --color-brand-action-rgb: var(--palette-blue-rgb);
+  --color-brand-action-hover: var(--palette-blue-hover);
+  --color-brand-action-pressed: var(--palette-blue-pressed);
+  --color-brand-subtle: var(--palette-blue-wash);
+  --color-focus: var(--palette-focus);
+  --color-focus-rgb: var(--palette-focus-rgb);
+  --color-on-action: var(--palette-paper);
+  --color-selection: rgba(var(--color-brand-action-rgb), 0.12);
+  --color-hover: rgba(var(--color-ink-rgb), 0.04);
+  --color-active: rgba(var(--color-ink-rgb), 0.07);
+
+  --color-success: var(--palette-success);
+  --color-success-surface: var(--palette-success-surface);
+  --color-success-border: var(--palette-success-border);
+  --color-warning: var(--palette-warning);
+  --color-warning-surface: var(--palette-warning-surface);
+  --color-warning-border: var(--palette-warning-border);
+  --color-danger: var(--palette-danger);
+  --color-danger-text: var(--palette-danger-text);
+  --color-danger-surface: var(--palette-danger-surface);
+  --color-danger-border: var(--palette-danger-border);
+
+  --color-code-surface: var(--palette-paper-recessed);
+  --color-overlay: rgba(var(--color-ink-rgb), 0.32);
+  --shadow-color-rgb: var(--palette-ink-rgb);
+  --shadow-soft: 0 1px 2px rgba(var(--shadow-color-rgb), 0.05);
+  --shadow-menu: 0 8px 24px rgba(var(--shadow-color-rgb), 0.08);
+
+  /* Component contracts */
+  --button-primary-background: var(--color-brand-action);
+  --button-primary-background-hover: var(--color-brand-action-hover);
+  --button-primary-background-pressed: var(--color-brand-action-pressed);
+  --button-primary-foreground: var(--color-on-action);
+  --button-secondary-background: var(--color-surface-raised);
+  --button-secondary-background-hover: var(--color-brand-subtle);
+  --button-secondary-foreground: var(--color-ink);
+  --button-secondary-border: var(--color-border);
+  --button-secondary-border-hover: var(--color-brand-action);
+  --button-danger-foreground: var(--color-danger-text);
+  --field-background: var(--color-surface-raised);
+  --field-foreground: var(--color-ink);
+  --field-placeholder: var(--color-ink-muted);
+  --field-border: var(--color-border);
+  --field-border-hover: var(--color-border-strong);
+  --field-border-focus: var(--color-focus);
+
+  /* Landing water: ink on paper, the occasional glint in the accent */
+  --water-ink: var(--palette-ink-rgb);
+  --water-glint: var(--palette-blue-rgb);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --color-canvas: var(--palette-dark-canvas);
+  --color-surface: var(--palette-dark-surface);
+  --color-surface-raised: var(--palette-dark-surface);
+  --color-surface-recessed: var(--palette-dark-recessed);
+  --color-ink: var(--palette-dark-ink);
+  --color-ink-rgb: var(--palette-dark-ink-rgb);
+  --color-ink-secondary: var(--palette-dark-secondary);
+  --color-ink-muted: var(--palette-dark-muted);
+  --color-border: var(--palette-dark-rule);
+  --color-border-strong: var(--palette-dark-rule-strong);
+  --color-brand-action: var(--palette-dark-blue);
+  --color-brand-action-rgb: var(--palette-dark-blue-rgb);
+  --color-brand-action-hover: var(--palette-dark-blue-hover);
+  --color-brand-action-pressed: var(--palette-dark-blue-pressed);
+  --color-brand-subtle: var(--palette-dark-raised);
+  --color-focus: var(--palette-dark-focus);
+  --color-focus-rgb: var(--palette-dark-focus-rgb);
+  --color-on-action: var(--palette-dark-canvas);
+  --color-success: var(--palette-dark-success);
+  --color-success-surface: var(--palette-dark-success-surface);
+  --color-success-border: var(--palette-dark-success-border);
+  --color-warning: var(--palette-dark-warning);
+  --color-warning-surface: var(--palette-dark-warning-surface);
+  --color-warning-border: var(--palette-dark-warning-border);
+  --color-danger: var(--palette-dark-danger);
+  --color-danger-text: var(--palette-dark-danger);
+  --color-danger-surface: var(--palette-dark-danger-surface);
+  --color-danger-border: var(--palette-dark-danger-border);
+  --color-code-surface: var(--palette-dark-recessed);
+  --color-overlay: rgba(0, 0, 0, 0.5);
+  --shadow-color-rgb: 0, 0, 0;
+  --shadow-soft: none;
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.32);
+  --water-ink: var(--palette-dark-ink-rgb);
+  --water-glint: var(--palette-dark-blue-rgb);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --color-canvas: var(--palette-dark-canvas);
+    --color-surface: var(--palette-dark-surface);
+    --color-surface-raised: var(--palette-dark-surface);
+    --color-surface-recessed: var(--palette-dark-recessed);
+    --color-ink: var(--palette-dark-ink);
+    --color-ink-rgb: var(--palette-dark-ink-rgb);
+    --color-ink-secondary: var(--palette-dark-secondary);
+    --color-ink-muted: var(--palette-dark-muted);
+    --color-border: var(--palette-dark-rule);
+    --color-border-strong: var(--palette-dark-rule-strong);
+    --color-brand-action: var(--palette-dark-blue);
+    --color-brand-action-rgb: var(--palette-dark-blue-rgb);
+    --color-brand-action-hover: var(--palette-dark-blue-hover);
+    --color-brand-action-pressed: var(--palette-dark-blue-pressed);
+    --color-brand-subtle: var(--palette-dark-raised);
+    --color-focus: var(--palette-dark-focus);
+    --color-focus-rgb: var(--palette-dark-focus-rgb);
+    --color-on-action: var(--palette-dark-canvas);
+    --color-success: var(--palette-dark-success);
+    --color-success-surface: var(--palette-dark-success-surface);
+    --color-success-border: var(--palette-dark-success-border);
+    --color-warning: var(--palette-dark-warning);
+    --color-warning-surface: var(--palette-dark-warning-surface);
+    --color-warning-border: var(--palette-dark-warning-border);
+    --color-danger: var(--palette-dark-danger);
+    --color-danger-text: var(--palette-dark-danger);
+    --color-danger-surface: var(--palette-dark-danger-surface);
+    --color-danger-border: var(--palette-dark-danger-border);
+    --color-code-surface: var(--palette-dark-recessed);
+    --color-overlay: rgba(0, 0, 0, 0.5);
+    --shadow-color-rgb: 0, 0, 0;
+    --shadow-soft: none;
+    --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.32);
+    --water-ink: var(--palette-dark-ink-rgb);
+    --water-glint: var(--palette-dark-blue-rgb);
+  }
+}
+
+:root {
+  /* Type */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Swarm Mono', 'SFMono-Regular', ui-monospace, Consolas, monospace;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+
+  /* Spacing, 4px grid */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Sharp, small radii */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+
+  /* Motion (IndexerLabs interaction tokens) */
+  --motion-duration-instant: 80ms;
+  --motion-duration-fast: 120ms;
+  --motion-duration-base: 200ms;
+  --motion-duration-moderate: 300ms;
+  --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --motion-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-transition-control:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    opacity var(--motion-duration-fast) var(--motion-ease-standard);
+
+  /* Controls */
+  --control-height-micro: 24px;
+  --control-height-compact: 28px;
+  --control-height-small: 32px;
+  --control-height-default: 36px;
+  --control-height-comfortable: 44px;
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* App layout */
+  --sidebar-width: 248px;
+  --topbar-height: 52px;
+  --row-height: 36px;
+}

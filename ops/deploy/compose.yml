@@ -1,0 +1,35 @@
+# swarmboard API on 0phone-runtime. Lives at /opt/swarmboard/compose.yml; source at /opt/swarmboard/src.
+# No host ports: the shared Caddy container reaches it as swarmboard-api:8191 on the swarmboard-edge network.
+name: swarmboard
+
+services:
+  swarmboard-api:
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+    image: swarmboard-api:latest
+    container_name: swarmboard-api
+    restart: unless-stopped
+    env_file: /opt/swarmboard/.env
+    environment:
+      # Pinned here so a stray value in .env can't make the container unreachable or move the DB.
+      BIND: 0.0.0.0:8191
+      DATA_DIR: /data
+      DATABASE_URL: sqlite:///data/swarmboard.db
+    volumes:
+      - swarmboard-data:/data
+    networks:
+      - swarmboard-edge
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+volumes:
+  swarmboard-data:
+    name: swarmboard-data
+
+networks:
+  swarmboard-edge:
+    external: true
