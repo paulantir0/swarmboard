@@ -1,22 +1,27 @@
 import { useEffect, useRef, type RefObject } from 'react'
-import { BOAT_H, BOAT_TOP, BOAT_W, Boat, DECK_X0, DECK_X1, WATERLINE, deckY } from './Boat'
+import { BOAT_H, BOAT_TOP, BOAT_W, Boat, BoatRail, DECK_MID, DECK_X0, DECK_X1, WATERLINE, deckY } from './Boat'
 import { CREW, CREW_CX, CREW_FEET, CREW_PITCH, CREW_VIEW, Critter } from './Crew'
 import { SNIPPETS, isMarker } from './seaText'
 
-// A side-view sea of code-review noise, like a 2D illustration: four stacked bands, each a
-// rolling wave line (two sines, wavelengths ~300-600px, several rows tall) with rows of PR
-// chatter hanging under it and following its contour. Each band scrolls at its own speed
-// (parallax), back bands lighter, front bands darker, and each one paints paper under its line
-// so it hides the bands behind. The boat rides the crest line of a middle band; the bands in
-// front are drawn on a second canvas above it, so they wash across the hull.
+// A side-view sea of code-review noise: four stacked bands, each a long rolling wave line with rows
+// of PR chatter hanging under it. Glyphs sit at sub-pixel positions and lean with the local slope
+// (a per-column shear), so the text flows over crests instead of stair-stepping. Each band scrolls at its own speed (back
+// lighter and slower, front darker and faster) and paints paper under its line to hide the bands
+// behind. The boat rides the crest of a middle band, its height and roll eased by critically damped
+// springs; the bands in front are on a second canvas, so they wash across the hull.
 //
-// Cost: one glyph atlas (ink + accent), rows as typed arrays of glyph indices, the wave line
-// computed once per column per band, 24fps, paused when hidden, one still frame for reduced motion.
+// Cost per frame: one transform per column per band (all rows of a column share it), one
+// drawImage per visible glyph from a pre-baked atlas, reused typed arrays, no allocation.
+// Every animation frame, all motion from elapsed time; paused when hidden; still under reduced motion.
 
-const FPS = 24
 const FAMILY = "'Swarm Mono', ui-monospace, monospace"
 const TAU = Math.PI * 2
 const BANDS = 4
+// Atlas rows: body text, crest text (fuller ink), merge markers (accent).
+const SET_BODY = 0
+const SET_CREST = 1
+const SET_ACCENT = 2
+const BODY_INK = 0.74
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 
@@ -53,26 +58,50 @@ interface Band {
   amp: number
   k1: number
   k2: number
+  k3: number
   ph1: number
   ph2: number
+  ph3: number
   speed: number // wave travel, px/s (leftwards)
   textSpeed: number
   alpha: number
   rows: Uint8Array[]
 }
 
+// Two long swells and one gentle ripple; height and its slope.
+const height = (b: Band, x: number, t: number) =>
+  b.base +
+  b.amp *
+    (0.74 * Math.sin(b.k1 * (x + b.speed * t) + b.ph1) +
+      0.21 * Math.sin(b.k2 * (x + b.speed * 1.4 * t) + b.ph2) +
+      0.05 * Math.sin(b.k3 * (x - b.speed * 0.6 * t) + b.ph3))
+const slope = (b: Band, x: number, t: number) =>
+  b.amp *
+  (0.74 * b.k1 * Math.cos(b.k1 * (x + b.speed * t) + b.ph1) +
+    0.21 * b.k2 * Math.cos(b.k2 * (x + b.speed * 1.4 * t) + b.ph2) +
+    0.05 * b.k3 * Math.cos(b.k3 * (x - b.speed * 0.6 * t) + b.ph3))
+
+/** Critically damped spring step toward `target`. */
+function spring(pos: number, vel: number, target: number, omega: number, dt: number): [number, number] {
+  const acc = omega * omega * (target - pos) - 2 * omega * vel
+  vel += acc * dt
+  return [pos + vel * dt, vel]
+}
+
 export function Sea({ sky }: { sky: RefObject<HTMLElement | null> }) {
   const backRef = useRef<HTMLCanvasElement>(null)
   const frontRef = useRef<HTMLCanvasElement>(null)
   const boatRef = useRef<HTMLDivElement>(null)
+  const railRef = useRef<HTMLDivElement>(null)
   const crewRef = useRef<(HTMLDivElement | null)[]>([])
 
   useEffect(() => {
     const back = backRef.current
     const front = frontRef.current
     const boat = boatRef.current
+    const rail = railRef.current
     const crew = crewRef.current
-    if (!back || !front || !boat) return
+    if (!back || !front || !boat || !rail) return
     const bctx = back.getContext('2d')
     const fctx = front.getContext('2d')
     if (!bctx || !fctx) return
@@ -88,19 +117,25 @@ export function Sea({ sky }: { sky: RefObject<HTMLElement | null> }) {
     let lineH = 18
     let bands: Band[] = []
     let atlas: HTMLCanvasElement | null = null
-    let cw = 8 // device px per glyph cell
+    let cw = 8 // atlas cell, device px
     let ch = 16
+    let step = 8 // glyph advance, CSS px
     let paper = '#ffffff'
     let cols = 0
     let wy = new Float32Array(0)
+    let ws = new Float32Array(0)
 
-    // Boat and crew
+    // Boat, crew and their eased pose
     let boatBand = -1
     let bw = 0
     let bs = 1
     let bxMid = 0
     let bxAmp = 0
-    let px = 3 // crew pixel size, whole CSS px
+    let cell = 3 // crew cell width, CSS px (height is twice that)
+    let poseY = Number.NaN
+    let poseVY = 0
+    let poseR = 0
+    let poseVR = 0
 
     const buildAtlas = (size: number) => {
       const css = getComputedStyle(root)
@@ -109,23 +144,26 @@ export function Sea({ sky }: { sky: RefObject<HTMLElement | null> }) {
       paper = css.getPropertyValue('--color-canvas').trim() || '#ffffff'
       cw = Math.max(2, Math.round(size * 0.6 * dpr))
       ch = Math.ceil(size * 1.4 * dpr)
+      step = cw / dpr
       const img = document.createElement('canvas')
       img.width = cw * CHARS.length
-      img.height = ch * 2
+      img.height = ch * 3
       const g = img.getContext('2d')
       if (!g) return null
       g.font = `400 ${size * dpr}px ${FAMILY}`
       g.textAlign = 'center'
       g.textBaseline = 'middle'
-      for (let set = 0; set < 2; set++) {
-        g.fillStyle = `rgb(${set ? accent : ink})`
+      const sets: [string, number][] = [
+        [ink, BODY_INK],
+        [ink, 1],
+        [accent, 0.9],
+      ]
+      sets.forEach(([rgb, a], set) => {
+        g.fillStyle = `rgba(${rgb}, ${a})`
         for (let i = 1; i < CHARS.length; i++) g.fillText(CHARS[i], i * cw + cw / 2, set * ch + ch / 2)
-      }
+      })
       return img
     }
-
-    const line = (b: Band, x: number, t: number) =>
-      b.base + b.amp * (0.78 * Math.sin(b.k1 * (x + b.speed * t) + b.ph1) + 0.22 * Math.sin(b.k2 * (x + b.speed * 1.6 * t) + b.ph2))
 
     const layout = () => {
       const rect = back.getBoundingClientRect()
@@ -143,13 +181,13 @@ export function Sea({ sky }: { sky: RefObject<HTMLElement | null> }) {
       const size = small ? 11 : 13
       lineH = Math.round(size * 1.38)
       atlas = buildAtlas(size)
-      const step = cw / dpr
-      cols = Math.ceil(W / step) + 2
+      cols = Math.ceil(W / step) + 3
       wy = new Float32Array(cols)
+      ws = new Float32Array(cols)
 
       // Bands: the back crest can reach seaTop, the rest stack evenly to the bottom edge.
       const seaTop = Math.min(H - 120, Math.max(H * 0.45, skyBottom + 10))
-      const A = small ? 22 : Math.min(52, Math.max(28, (H - seaTop) * 0.12))
+      const A = small ? 20 : Math.min(46, Math.max(26, (H - seaTop) * 0.11))
       const base0 = seaTop + A
       const gap = (H - base0) / (BANDS - 0.15)
       const dark = isDark()
@@ -157,17 +195,18 @@ export function Sea({ sky }: { sky: RefObject<HTMLElement | null> }) {
       bands = []
       for (let i = 0; i < BANDS; i++) {
         const z = i / (BANDS - 1)
-        const amp = A * lerp(0.8, 1.05, z)
-        const lambda = lerp(640, 440, z) * (small ? 0.8 : 1)
+        const lambda = lerp(920, 700, z) * (small ? 0.72 : 1)
         bands.push({
           base: base0 + i * gap,
-          amp,
+          amp: A * lerp(0.8, 1.05, z),
           k1: TAU / lambda,
-          k2: TAU / (lambda * 0.58),
+          k2: TAU / (lambda * 0.57),
+          k3: TAU / (lambda * 0.31),
           ph1: i * 1.9,
           ph2: i * 0.7 + 1,
-          speed: lerp(12, 40, z) * (small ? 0.7 : 1),
-          textSpeed: lerp(7, 22, z) * (small ? 0.7 : 1),
+          ph3: i * 2.3 + 0.4,
+          speed: lerp(9, 24, z) * (small ? 0.75 : 1),
+          textSpeed: lerp(5, 14, z) * (small ? 0.75 : 1),
           alpha: lerp(0.15, dark ? 0.42 : 0.5, z),
           rows: [],
         })
@@ -180,11 +219,13 @@ export function Sea({ sky }: { sky: RefObject<HTMLElement | null> }) {
         for (let r = 0; r < n; r++) b.rows.push(rowText(rand, cols * 2 + 60))
       }
 
-      // Boat: long enough that six crew at a readable pixel size fit on the deck. On short
-      // screens it shrinks until its masthead clears the copy; if it never does, it stays ashore.
-      const fit = (width: number) => {
-        bw = width
-        bs = bw / BOAT_W
+      // Boat: sized so six crew fit on the deck at a readable cell size. If its masthead can't
+      // clear the copy, the crew (and boat) step down a size; failing that, it stays ashore.
+      const fit = (cellW: number) => {
+        const deckPx = (CREW_PITCH * CREW.length + 8) * cellW
+        bs = deckPx / (DECK_X1 - DECK_X0)
+        bw = BOAT_W * bs
+        if (bw > W - 8) return -1
         const above = (WATERLINE - BOAT_TOP) * bs
         const free = W - 8 - (skyRight + 16) - bw
         let overlaps = true
@@ -194,118 +235,167 @@ export function Sea({ sky }: { sky: RefObject<HTMLElement | null> }) {
           overlaps = false
         } else {
           bxMid = W / 2 + (small ? 0 : W * 0.12)
-          bxAmp = small ? Math.max(0, (W - bw) / 2 - 4) : W * 0.04
+          bxAmp = Math.max(0, Math.min(small ? 24 : W * 0.04, (W - bw) / 2 - 4))
         }
         for (let i = 1; i < BANDS; i++) {
           const b = bands[i]
           if (overlaps && b.base - b.amp - above < skyBottom + 6) continue
-          // The last band only as a fallback: it has nothing in front to wash over the hull.
-          if (i === BANDS - 1 && width > minBw) return -1
+          // The last band only as a fallback: nothing in front of it washes over the hull.
+          if (i === BANDS - 1 && cellW > 2) return -1
           return i
         }
         return -1
       }
-      const fullBw = small ? Math.min(W - 24, 360) : Math.min(580, Math.max(300, W * 0.4))
-      const minBw = Math.min(fullBw, small ? W * 0.62 : 260)
       boatBand = -1
-      for (let width = fullBw; boatBand < 0 && width >= minBw - 0.5; width = width > minBw ? Math.max(minBw, width * 0.92) : minBw - 1) {
-        boatBand = fit(width)
+      for (cell = small ? 2 : 3; cell >= 2 && boatBand < 0; cell--) boatBand = fit(cell)
+      cell++
+      poseY = Number.NaN
+
+      for (const layer of [boat, rail]) {
+        layer.style.width = `${bw}px`
+        layer.style.height = `${BOAT_H * bs}px`
+        layer.style.transformOrigin = `${bw / 2}px ${WATERLINE * bs}px`
+        layer.style.display = boatBand < 0 ? 'none' : ''
       }
-      px = Math.max(2, Math.min(6, Math.floor(((DECK_X1 - DECK_X0) * bs) / (CREW_PITCH * CREW.length + 2))))
-      boat.style.width = `${bw}px`
-      boat.style.height = `${BOAT_H * bs}px`
-      boat.style.transformOrigin = `${bw / 2}px ${WATERLINE * bs}px`
-      boat.style.display = boatBand < 0 ? 'none' : ''
       for (const c of crew) {
         if (!c) continue
-        c.style.width = `${CREW_VIEW.w * px}px`
-        c.style.height = `${CREW_VIEW.h * px}px`
+        c.style.width = `${CREW_VIEW.w * cell}px`
+        c.style.height = `${CREW_VIEW.h * cell * 2}px`
         c.style.display = boatBand < 0 ? 'none' : ''
       }
     }
 
     const drawBand = (ctx: CanvasRenderingContext2D, b: Band, i: number, t: number) => {
       if (!atlas) return
-      const step = cw / dpr
       const off = b.textSpeed * t
       const start = Math.floor(off / step)
       const frac = off - start * step
-      for (let c = 0; c < cols; c++) wy[c] = line(b, c * step - frac + step / 2, t)
+      const half = step / 2
+      for (let c = 0; c < cols; c++) {
+        const x = c * step - frac + half
+        wy[c] = height(b, x, t)
+        ws[c] = slope(b, x, t)
+      }
       // Paper under the wave line hides the bands behind this one.
       if (i > 0) {
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         ctx.globalAlpha = 1
         ctx.fillStyle = paper
         ctx.beginPath()
-        ctx.moveTo(0, H * dpr)
+        ctx.moveTo(-step, H + 1)
         const lift = lineH * 0.62
-        for (let c = 0; c < cols; c++) ctx.lineTo((c * step - frac) * dpr, (wy[c] - lift) * dpr)
-        ctx.lineTo(W * dpr, H * dpr)
+        for (let c = 0; c < cols; c++) ctx.lineTo(c * step - frac + half, wy[c] - lift)
+        ctx.lineTo(W + step, H + 1)
         ctx.closePath()
         ctx.fill()
       }
-      const half = ch / 2
-      for (let r = 0; r < b.rows.length; r++) {
-        const text = b.rows[r]
-        const len = text.length
-        // The crest row is a touch darker so each wave line reads as a shape.
-        ctx.globalAlpha = r === 0 ? Math.min(1, b.alpha * 1.35) : b.alpha * (r === 1 ? 1 : 0.9)
-        const dy = r * lineH
-        for (let c = 0; c < cols; c++) {
-          const code = text[(start + c + r * 7) % len]
+      ctx.globalAlpha = Math.min(1, b.alpha / BODY_INK)
+      const gw = cw / dpr
+      const gh = ch / dpr
+      const rows = b.rows
+      const nRows = rows.length
+      const next = i < BANDS - 1 ? bands[i + 1] : null
+      for (let c = 0; c < cols; c++) {
+        const x = c * step - frac + half
+        const y = wy[c]
+        if (y - lineH > H) continue
+        // Rows that would sit under the next band's paper are never seen: stop there.
+        const floor = next ? height(next, x, t) + lineH * 0.4 : H + lineH
+        const maxRows = Math.min(nRows, Math.ceil((floor - y) / lineH) + 1)
+        if (maxRows <= 0) continue
+        // Shear each column to the local slope: glyphs lean with the wave, rows stay stacked.
+        ctx.setTransform(dpr, ws[c] * dpr, 0, dpr, x * dpr, y * dpr)
+        for (let r = 0; r < maxRows; r++) {
+          const text = rows[r]
+          const code = text[(start + c + r * 7) % text.length]
           const g = code & 127
           if (g === 0) continue
-          const y = (wy[c] + dy) * dpr - half
-          if (y > H * dpr) continue
-          ctx.drawImage(atlas, g * cw, code >> 7 ? ch : 0, cw, ch, Math.round((c * step - frac) * dpr), Math.round(y), cw, ch)
+          const set = code & ACCENT ? SET_ACCENT : r === 0 ? SET_CREST : SET_BODY
+          ctx.drawImage(atlas, g * cw, set * ch, cw, ch, -gw / 2, r * lineH - gh / 2, gw, gh)
         }
       }
       ctx.globalAlpha = 1
     }
 
-    const placeBoat = (t: number) => {
+    const snap = (v: number) => Math.round(v * dpr) / dpr
+
+    const placeBoat = (t: number, dt: number) => {
       if (boatBand < 0) return
       const b = bands[boatBand]
-      const x = bxMid + bxAmp * Math.sin(t * 0.04 + 1.1)
-      const h = line(b, x, t)
+      const x = bxMid + bxAmp * Math.sin(t * 0.035 + 1.1)
       const span = bw * 0.3
-      const slope = (line(b, x + span, t) - line(b, x - span, t)) / (2 * span)
-      const roll = Math.max(-0.3, Math.min(0.3, Math.atan(slope) * 0.85))
+      const h = (height(b, x - span, t) + 2 * height(b, x, t) + height(b, x + span, t)) / 4
+      const target = Math.max(-0.22, Math.min(0.22, Math.atan((height(b, x + span, t) - height(b, x - span, t)) / (2 * span)) * 0.85))
+      if (Number.isNaN(poseY) || dt <= 0) {
+        poseY = h
+        poseVY = 0
+        poseR = target
+        poseVR = 0
+      } else {
+        // Sub-step so a long frame can't make the springs overshoot.
+        let left = Math.min(dt, 0.1)
+        while (left > 0) {
+          const d = Math.min(left, 1 / 120)
+          ;[poseY, poseVY] = spring(poseY, poseVY, h, 3.4, d)
+          ;[poseR, poseVR] = spring(poseR, poseVR, target, 2.6, d)
+          left -= d
+        }
+      }
+      const roll = poseR
       const tx = x - bw / 2
-      const ty = h - WATERLINE * bs
-      boat.style.transform = `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) rotate(${roll.toFixed(4)}rad)`
-      // Crew: stand on the rolled deck, kept upright and snapped to whole pixels.
+      const ty = poseY - WATERLINE * bs
+      const tf = `translate3d(${tx.toFixed(2)}px, ${ty.toFixed(2)}px, 0) rotate(${roll.toFixed(4)}rad)`
+      boat.style.transform = tf
+      rail.style.transform = tf
+      // Crew: upright, feet on the rolled deck line, the odd small hop of their own.
       const ox = bw / 2
       const oy = WATERLINE * bs
       const cs = Math.cos(roll)
       const sn = Math.sin(roll)
-      const mid = (DECK_X0 + DECK_X1) / 2
+      const pitch = (CREW_PITCH * cell) / bs
+      const hopH = cell * 1.6
       for (let k = 0; k < crew.length; k++) {
         const el = crew[k]
         if (!el) continue
-        const lx = mid + ((k - (CREW.length - 1) / 2) * CREW_PITCH * px) / bs
-        const ly = deckY(lx)
+        const lx = DECK_MID + (k - (CREW.length - 1) / 2) * pitch
         const dx = lx * bs - ox
-        const dy = ly * bs - oy
+        const dy = deckY(lx) * bs - oy
         const fx = tx + ox + dx * cs - dy * sn
         const fy = ty + oy + dx * sn + dy * cs
-        const left = Math.round(fx - (CREW_CX - CREW_VIEW.x) * px)
-        const top = Math.round(fy - (CREW_FEET - CREW_VIEW.y) * px)
+        const period = 3.1 + k * 0.53
+        const u = (t + k * 1.37) % period
+        const hop = dt > 0 && u < 0.38 ? Math.sin((Math.PI * u) / 0.38) * hopH : 0
+        const left = snap(fx - (CREW_CX - CREW_VIEW.x) * cell)
+        const top = snap(fy - (CREW_FEET - CREW_VIEW.y) * cell * 2 - hop)
         el.style.transform = `translate3d(${left}px, ${top}px, 0)`
       }
     }
 
-    const draw = (t: number) => {
+    // Dev builds report the draw cost on the canvas (data-frame-ms="avg/max" over ~2s).
+    let statN = 0
+    let statSum = 0
+    let statMax = 0
+
+    const draw = (t: number, dt: number) => {
       if (!atlas) return
+      const t0 = import.meta.env.DEV ? performance.now() : 0
       const split = boatBand < 0 ? BANDS : boatBand + 1
-      for (const [ctx, from, to] of [
-        [bctx, 0, split],
-        [fctx, split, BANDS],
-      ] as const) {
-        ctx.setTransform(1, 0, 0, 1, 0, 0)
-        ctx.clearRect(0, 0, back.width, back.height)
-        for (let i = from; i < to; i++) drawBand(ctx, bands[i], i, t)
+      bctx.setTransform(1, 0, 0, 1, 0, 0)
+      bctx.clearRect(0, 0, back.width, back.height)
+      for (let i = 0; i < split; i++) drawBand(bctx, bands[i], i, t)
+      fctx.setTransform(1, 0, 0, 1, 0, 0)
+      fctx.clearRect(0, 0, front.width, front.height)
+      for (let i = split; i < BANDS; i++) drawBand(fctx, bands[i], i, t)
+      placeBoat(t, dt)
+      if (import.meta.env.DEV) {
+        const ms = performance.now() - t0
+        statSum += ms
+        statMax = Math.max(statMax, ms)
+        if (++statN >= 120) {
+          back.dataset.frameMs = `${(statSum / statN).toFixed(2)}/${statMax.toFixed(2)}`
+          statN = statSum = statMax = 0
+        }
       }
-      placeBoat(t)
     }
 
     let raf = 0
@@ -313,14 +403,14 @@ export function Sea({ sky }: { sky: RefObject<HTMLElement | null> }) {
     let running = false
     let ready = false
     let disposed = false
-    const t0 = performance.now()
+    const tStart = performance.now()
     const STILL_T = 7
 
     const loop = (now: number) => {
       raf = requestAnimationFrame(loop)
-      if (now - last < 1000 / FPS - 2) return
+      const dt = last ? (now - last) / 1000 : 0
       last = now
-      draw((now - t0) / 1000)
+      draw((now - tStart) / 1000, dt)
     }
     const play = () => {
       if (!ready || running || reduce.matches || document.hidden) return
@@ -335,13 +425,12 @@ export function Sea({ sky }: { sky: RefObject<HTMLElement | null> }) {
     const refresh = () => {
       if (!ready) return
       layout()
-      boat.classList.add('ready')
-      for (const c of crew) c?.classList.add('ready')
+      for (const el of [boat, rail, ...crew]) el?.classList.add('ready')
       if (reduce.matches) {
         stop()
-        draw(STILL_T)
+        draw(STILL_T, 0)
       } else {
-        draw((performance.now() - t0) / 1000)
+        draw((performance.now() - tStart) / 1000, 0)
         play()
       }
     }
@@ -402,6 +491,9 @@ export function Sea({ sky }: { sky: RefObject<HTMLElement | null> }) {
           <Critter kind={c.kind} color={c.color} delay={i * 0.61} />
         </div>
       ))}
+      <div ref={railRef} className="sea-boat" aria-hidden="true">
+        <BoatRail />
+      </div>
       <canvas ref={frontRef} className="sea sea-front" aria-hidden="true" />
     </>
   )

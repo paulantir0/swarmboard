@@ -170,6 +170,39 @@ body.no-scroll {
   opacity: 0.45;
 }
 
+/* Hand-inked weights: hull heaviest, rigging lightest */
+.boat .w1 {
+  stroke-width: 1px;
+}
+
+.boat .w12 {
+  stroke-width: 1.2px;
+}
+
+.boat .w14 {
+  stroke-width: 1.4px;
+}
+
+.boat .w16 {
+  stroke-width: 1.6px;
+}
+
+.boat .w18 {
+  stroke-width: 1.8px;
+}
+
+.boat .w2 {
+  stroke-width: 2px;
+}
+
+.boat .w22 {
+  stroke-width: 2.3px;
+}
+
+.boat .seam {
+  opacity: 0.5;
+}
+
 .boat .pennant {
   transform-box: fill-box;
   transform-origin: 0% 50%;

@@ -1,7 +1,8 @@
-// The crew: six pixel critters, one sprite recoloured, each with a pixel accessory. Drawn as SVG
-// rects with crispEdges and sized in whole pixels per cell, so they stay sharp; they are kept
-// upright (only translated, to whole pixels) while the boat rolls under them. Animation is frame
-// swapping with steps() timing: blink, a two-frame leg shuffle, a waving nub, a fluttering flag.
+// The crew: six Claude-style critters, one sprite recoloured, each with an accessory. The sprite
+// is built like the terminal original, from quadrant blocks, so a cell is 1 wide by 2 tall: the
+// SVG stretches a cell grid to w x 2w CSS px (preserveAspectRatio="none", crispEdges). Sea.tsx
+// keeps them upright and places their feet on the deck. Frame swaps (steps timing): blink, a
+// two-frame leg shuffle, a waving nub, a fluttering flag.
 //
 // Sprite, 18 x 5 cells (# body, E eye):
 //   ...############...
@@ -15,9 +16,9 @@ import type { CSSProperties } from 'react'
 type Cell = [number, number]
 type Kind = 'flag' | 'bow' | 'pirate' | 'headphones' | 'waver' | 'spyglass'
 
-/** View box, in cells: room for the flag above and the spyglass to the right. */
-export const CREW_VIEW = { x: -1, y: -6, w: 22, h: 12 }
-/** Cell column of the body's centre, and the row of the feet's bottom edge. */
+/** View box, in cells: the pole and flag to the left and above, the spyglass to the right. */
+export const CREW_VIEW = { x: -1, y: -3, w: 23, h: 9 }
+/** Cell column of the body's centre, and the cell row at the bottom of the feet. */
 export const CREW_CX = 9
 export const CREW_FEET = 6
 /** Cells from one critter to the next (16 wide plus a gap). */
@@ -35,7 +36,7 @@ export const CREW: { kind: Kind; color: string }[] = [
 const span = (y: number, x0: number, x1: number): Cell[] => Array.from({ length: x1 - x0 + 1 }, (_, i) => [x0 + i, y])
 
 /** Merge cells into one rect per horizontal run. */
-function Px({ cells, className, style }: { cells: Cell[]; className?: string; style?: CSSProperties }) {
+function Px({ cells, className }: { cells: Cell[]; className?: string }) {
   const rows = new Map<number, number[]>()
   for (const [x, y] of cells) rows.set(y, [...(rows.get(y) ?? []), x])
   const rects: [number, number, number][] = []
@@ -53,7 +54,7 @@ function Px({ cells, className, style }: { cells: Cell[]; className?: string; st
     }
   }
   return (
-    <g className={className} style={style}>
+    <g className={className}>
       {rects.map(([x, y, w]) => (
         <rect key={`${x},${y}`} x={x} y={y} width={w} height={1} />
       ))}
@@ -75,9 +76,10 @@ const LEGS_B: Cell[] = [[6, 4], [6, 5], [13, 4], [13, 5], [4, 4], [11, 4]]
 function Accessory({ kind }: { kind: Kind }) {
   switch (kind) {
     case 'pirate':
+      // Tricorn: a wide brim, upturned corners, a crown, and a skull.
       return (
         <>
-          <Px className="px-hat" cells={[...span(-1, 2, 15), [2, -2], ...span(-2, 4, 13), [15, -2], ...span(-3, 6, 11)]} />
+          <Px className="px-hat" cells={[...span(-1, 2, 15), [2, -2], ...span(-2, 5, 12), [15, -2]]} />
           <Px className="px-skull" cells={[[8, -2], [9, -2]]} />
         </>
       )
@@ -89,20 +91,21 @@ function Accessory({ kind }: { kind: Kind }) {
         </>
       )
     case 'headphones':
-      return <Px className="px-gear" cells={[...span(-2, 3, 14), [2, -1], [15, -1], [1, 0], [2, 0], [1, 1], [2, 1], [15, 0], [16, 0], [15, 1], [16, 1]]} />
+      // Band over the head, cups over the nubs' shoulders.
+      return <Px className="px-gear" cells={[...span(-1, 2, 15), [1, 0], [2, 0], [1, 1], [2, 1], [15, 0], [16, 0], [15, 1], [16, 1]]} />
     case 'spyglass':
       return (
         <>
-          <Px className="px-brass" cells={[[17, 2], [18, 2]]} />
-          <Px className="px-lens" cells={[[19, 1], [19, 2], [19, 3]]} />
+          <Px className="px-brass" cells={[[17, 2], [18, 2], [19, 2]]} />
+          <Px className="px-lens" cells={[[20, 2], [20, 1]]} />
         </>
       )
     case 'flag':
       return (
         <>
-          <Px className="px-pole" cells={Array.from({ length: 9 }, (_, i): Cell => [0, -6 + i])} />
-          <Px className="px-flag px-fa" cells={[...span(-6, 1, 4), ...span(-5, 1, 4), ...span(-4, 1, 3)]} />
-          <Px className="px-flag px-fb" cells={[...span(-6, 1, 3), ...span(-5, 1, 4), ...span(-4, 1, 4)]} />
+          <Px className="px-pole" cells={[[0, -3], [0, -2], [0, -1], [0, 0], [0, 1], [0, 2], [0, 3]]} />
+          <Px className="px-flag px-fa" cells={[...span(-3, 1, 4), ...span(-2, 1, 3)]} />
+          <Px className="px-flag px-fb" cells={[...span(-3, 1, 3), ...span(-2, 1, 4)]} />
         </>
       )
     default:
@@ -114,7 +117,17 @@ export function Critter({ kind, color, delay }: { kind: Kind; color: string; del
   const style = { '--crew-c': `var(--crew-${color})`, '--d': `${-delay}s`, '--d2': `${-delay * 0.37}s` } as CSSProperties
   const { x, y, w, h } = CREW_VIEW
   return (
-    <svg viewBox={`${x} ${y} ${w} ${h}`} width="100%" height="100%" shapeRendering="crispEdges" className="px" style={style} aria-hidden="true" focusable="false">
+    <svg
+      viewBox={`${x} ${y} ${w} ${h}`}
+      preserveAspectRatio="none"
+      width="100%"
+      height="100%"
+      shapeRendering="crispEdges"
+      className="px"
+      style={style}
+      aria-hidden="true"
+      focusable="false"
+    >
       <Px className="px-body" cells={[...BODY, ...NUB_L, ...(kind === 'waver' ? [] : NUB_R)]} />
       {kind === 'waver' ? (
         <>
