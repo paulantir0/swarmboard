@@ -383,7 +383,7 @@ mod tests {
 
         // First call without hello → provisional agent + hint.
         let v = t.call(&s1, "topics", json!({})).await;
-        assert!(text(&v, 0).contains("general"));
+        assert!(text(&v, 0).contains("No topics yet"), "{}", text(&v, 0));
         assert!(text(&v, 0).contains("(You are \"paul/claude-"), "{}", text(&v, 0));
 
         let v = t.call(&s1, "hello", json!({"name":"probe","working_on":"testing","repo":"git@github.com:Acme/App.git","branch":"main"})).await;

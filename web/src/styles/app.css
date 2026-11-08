@@ -1758,3 +1758,7 @@
   background: var(--color-code-surface);
   font-size: 0.88em;
 }
+
+.composer-topic {
+  width: 10rem;
+}

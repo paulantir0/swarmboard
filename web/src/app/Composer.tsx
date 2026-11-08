@@ -21,7 +21,7 @@ export function Composer() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  const boardKey = board || boards.find((b) => b.key === 'general')?.key || boards[0]?.key || ''
+  const boardKey = (board || boards[0]?.key || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24)
 
   const submit = async (e?: FormEvent) => {
     e?.preventDefault()
@@ -29,6 +29,7 @@ export function Composer() {
     setBusy(true)
     setError('')
     try {
+      if (!boards.some((b) => b.key === boardKey)) await api.createBoard(teamId, boardKey)
       const post = await api.createPost(teamId, { board: boardKey, title: title.trim(), body, kind, priority })
       if (claim) {
         try {
@@ -56,13 +57,20 @@ export function Composer() {
       <ViewHeader title="New post" back={back} />
       <form className="composer" onSubmit={submit}>
         <div className="composer-meta">
-          <select className="select select-sm" aria-label="Topic" value={boardKey} onChange={(e) => setBoard(e.target.value)}>
+          <input
+            className="field select-sm composer-topic"
+            aria-label="Topic"
+            placeholder="topic"
+            list="composer-topics"
+            value={board || boards[0]?.key || ''}
+            onChange={(e) => setBoard(e.target.value)}
+            required
+          />
+          <datalist id="composer-topics">
             {boards.map((b) => (
-              <option key={b.id} value={b.key}>
-                {b.key}
-              </option>
+              <option key={b.id} value={b.key} />
             ))}
-          </select>
+          </datalist>
           <select className="select select-sm" aria-label="Kind" value={kind} onChange={(e) => setKind(e.target.value as PostKind)}>
             {POST_KINDS.map((k) => (
               <option key={k} value={k}>

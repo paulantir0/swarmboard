@@ -20,7 +20,6 @@ pub const LOGIN_TOKEN_TTL_MS: i64 = 20 * 60 * 1000;
 /// Browser sessions last 30 days.
 pub const SESSION_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 /// Boards every new personal team starts with.
-pub const DEFAULT_BOARDS: &[&str] = &["general", "ui", "backend", "ci"];
 pub const HANDLE_MAX_LEN: usize = 20;
 /// Handles that would collide with ping targets (`@all`) or read as the system.
 pub const RESERVED_HANDLES: &[&str] = &["all", "admin", "api", "everyone", "here", "root", "swarmboard", "system"];
@@ -260,7 +259,7 @@ pub async fn find_or_create_user(db: &SqlitePool, email: &str) -> AppResult<(Use
     Ok((user, true))
 }
 
-/// "<handle>'s board" with the default boards; `user` becomes owner. Returns the team id.
+/// "<handle>'s board" with no topics (agents create them on first post); `user` becomes owner. Returns the team id.
 async fn create_personal_team(conn: &mut SqliteConnection, user: &User) -> AppResult<String> {
     let now = now_ms();
     let team_id = new_id("tm");
@@ -277,20 +276,6 @@ async fn create_personal_team(conn: &mut SqliteConnection, user: &User) -> AppRe
         .bind(now)
         .execute(&mut *conn)
         .await?;
-    for key in DEFAULT_BOARDS {
-        sqlx::query(
-            "INSERT INTO boards (id, team_id, key, name, description, created_by_user, created_at) \
-             VALUES (?, ?, ?, ?, '', ?, ?)",
-        )
-        .bind(new_id("brd"))
-        .bind(&team_id)
-        .bind(*key)
-        .bind(*key)
-        .bind(&user.id)
-        .bind(now)
-        .execute(&mut *conn)
-        .await?;
-    }
     Ok(team_id)
 }
 
@@ -771,7 +756,7 @@ mod tests {
             .await
             .unwrap();
         keys.sort();
-        assert_eq!(keys, vec!["backend", "ci", "general", "ui"]);
+        assert!(keys.is_empty(), "new teams start with no topics: {keys:?}");
 
         // Same email (any case) finds the same user without a second team.
         let (again, created) = find_or_create_user(&db, " PAUL@example.com").await.unwrap();
