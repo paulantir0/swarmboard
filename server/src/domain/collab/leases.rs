@@ -10,7 +10,10 @@
 use serde_json::json;
 use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 
-use super::{add_comment, author, bad, claim_post, deliver_ping, record_event, release_post, require_post, truncate_chars, Recipient};
+use super::{
+    actor_display, add_comment, ago, author, bad, claim_post, deliver_ping, record_event, release_post, require_post, truncate_chars,
+    Recipient,
+};
 use crate::{
     error::{AppError, AppResult},
     models::{Actor, ClaimsView, Lease, LeaseWait, Post},
@@ -22,6 +25,8 @@ pub const MAX_MINUTES: i64 = 480;
 /// Queue entries of agents unseen for this long are dropped.
 const STALE_WAIT_MS: i64 = 60 * 60 * 1000;
 const MAX_NOTE: usize = 300;
+/// `claim(force:true)` takes over a task whose holder has been silent this long.
+pub const FORCE_IDLE_MS: i64 = 15 * 60 * 1000;
 
 // ---------------------------------------------------------------------------------------------
 // Scopes
@@ -58,6 +63,10 @@ pub struct Scope {
 }
 
 impl Scope {
+    /// "path Makefile", "resource ci", "task #12".
+    pub fn label(&self) -> String {
+        format!("{} {}", self.kind.as_str(), self.text)
+    }
     pub fn task_number(&self) -> Option<i64> {
         if self.kind == ScopeKind::Task { self.text.trim_start_matches('#').parse().ok() } else { None }
     }
@@ -202,6 +211,9 @@ impl LeaseRow {
     fn kind(&self) -> ScopeKind {
         ScopeKind::parse(&self.kind)
     }
+    pub fn to_scope(&self) -> Scope {
+        Scope { kind: self.kind(), text: self.scope.clone() }
+    }
     pub fn display(&self) -> String {
         format!("{}/{}", self.handle, self.agent_name)
     }
@@ -308,7 +320,9 @@ async fn deliver(db: &SqlitePool, notices: Vec<Notice>) {
                 );
                 let target = to.display().to_string();
                 let r = deliver_ping(db, &from, &target, &body, None, &[to], false).await.map(|_| ());
-                if let Some(n) = scope.strip_prefix('#').and_then(|n| n.parse::<i64>().ok()) {
+                if let Some(n) = scope.strip_prefix('#').and_then(|n| n.parse::<i64>().ok())
+                    && require_post(db, &waiter.team_id, n).await.is_ok_and(|p| !is_finished(&p.status))
+                {
                     let _ = claim_post(db, &waiter, n, false).await;
                 }
                 r
@@ -515,14 +529,31 @@ pub async fn tick(db: &SqlitePool, team_id: &str) -> AppResult<()> {
 #[derive(Debug)]
 #[allow(dead_code)] // fields kept for callers/tests
 pub enum ClaimOutcome {
-    /// `renewed`: you already held exactly this scope.
-    Granted { scope: Scope, repo: String, minutes: i64, expires_at: i64, renewed: bool, post: Option<Post> },
+    /// `renewed`: you already held exactly this scope. `took_over`: holders displaced by force.
+    Granted { scope: Scope, repo: String, minutes: i64, expires_at: i64, renewed: bool, post: Option<Post>, took_over: Vec<String> },
     /// Held by others (overlapping leases, oldest first).
     Taken { scope: Scope, repo: String, holders: Vec<LeaseRow> },
     Queued { scope: Scope, repo: String, position: i64, holders: Vec<LeaseRow> },
 }
 
+fn is_finished(status: &str) -> bool {
+    status == "done" || status == "closed"
+}
+
+/// Options for `claim_with`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ClaimOpts<'a> {
+    pub note: Option<&'a str>,
+    pub minutes: Option<i64>,
+    /// If taken, join the FIFO queue instead of failing.
+    pub wait: bool,
+    /// Take over from the holders: a task (#n) whose holders have been inactive `FORCE_IDLE_MS`,
+    /// or anything when the caller is an org owner/admin.
+    pub force: bool,
+}
+
 /// Take an exclusive lease. `agent_repo` scopes path leases (None = conflicts with paths in any repo).
+#[cfg_attr(not(test), allow(dead_code))] // the MCP tool uses `claim_with`
 pub async fn claim(
     db: &SqlitePool,
     actor: &Actor,
@@ -532,24 +563,107 @@ pub async fn claim(
     minutes: Option<i64>,
     wait: bool,
 ) -> AppResult<ClaimOutcome> {
+    claim_with(db, actor, agent_repo, raw_scope, ClaimOpts { note, minutes, wait, force: false }).await
+}
+
+/// Someone who holds what a force claim wants: (display, agent id if an agent).
+struct Holder {
+    display: String,
+    agent_id: Option<String>,
+}
+
+/// Why `actor` may not force-take `scope` from `holders`, or None if it may.
+async fn force_refusal(tx: &mut Transaction<'static, Sqlite>, actor: &Actor, scope: &Scope, holders: &[Holder]) -> AppResult<Option<String>> {
+    let role: Option<String> = sqlx::query_scalar("SELECT role FROM memberships WHERE team_id = ?1 AND user_id = ?2")
+        .bind(actor.team_id.as_str())
+        .bind(actor.user_id.as_str())
+        .fetch_optional(&mut **tx)
+        .await?;
+    if matches!(role.as_deref(), Some("owner" | "admin")) {
+        return Ok(None);
+    }
+    let now = now_ms();
+    let mut busy: Vec<String> = Vec::new();
+    for h in holders {
+        let seen: Option<i64> = match &h.agent_id {
+            Some(id) => sqlx::query_scalar("SELECT last_seen_at FROM agents WHERE id = ?1").bind(id.as_str()).fetch_optional(&mut **tx).await?,
+            None => None,
+        };
+        match seen {
+            Some(t) if now - t >= FORCE_IDLE_MS => {}
+            Some(t) => busy.push(format!("{} (active {})", h.display, ago(t, now))),
+            None => busy.push(format!("{} (a human)", h.display)),
+        }
+    }
+    let idle_min = FORCE_IDLE_MS / 60_000;
+    let rule = format!(
+        "force:true takes over only a task (#n) whose holder has been inactive {idle_min}+ minutes, or any lease if you are an org owner/admin"
+    );
+    let who = holders.first().map(|h| h.display.as_str()).unwrap_or("them");
+    let next = format!("send(to:\"{who}\") to coordinate, or claim(scope:\"{}\", wait:true) to queue", scope.text);
+    let names: Vec<&str> = holders.iter().map(|h| h.display.as_str()).collect();
+    Ok(if scope.kind != ScopeKind::Task {
+        Some(format!("{} is held by {}; {rule}. {next}.", scope.label(), names.join(", ")))
+    } else if !busy.is_empty() {
+        Some(format!("{} is held by {}; {rule}. {next}.", scope.label(), busy.join(", ")))
+    } else {
+        None
+    })
+}
+
+/// `claim` with all options (see `ClaimOpts`).
+pub async fn claim_with(db: &SqlitePool, actor: &Actor, agent_repo: Option<&str>, raw_scope: &str, opts: ClaimOpts<'_>) -> AppResult<ClaimOutcome> {
+    let ClaimOpts { note, minutes, wait, force } = opts;
     let agent_id = actor.agent_id.clone().ok_or_else(|| bad("only agents take leases"))?;
     let scope = parse_scope(raw_scope)?;
     let repo = if scope.kind == ScopeKind::Path { agent_repo.unwrap_or("").to_string() } else { String::new() };
     let minutes = minutes.unwrap_or(DEFAULT_MINUTES).clamp(1, MAX_MINUTES);
     let note = truncate_chars(note.unwrap_or("").trim(), MAX_NOTE);
+    // A post claimed outside the lease system (dashboard), by someone else.
+    let mut post_holder: Option<Holder> = None;
     if let Some(n) = scope.task_number() {
-        require_post(db, &actor.team_id, n).await?;
+        let p = require_post(db, &actor.team_id, n).await?;
+        if is_finished(&p.status) {
+            return Err(bad(format!("#{n} is {}; update(number:{n}, status:\"open\") to reopen it first", p.status)));
+        }
+        post_holder = p
+            .claimed_by
+            .filter(|c| !(c.agent_id.as_deref() == Some(agent_id.as_str()) && c.user_id == actor.user_id))
+            .map(|c| Holder { display: c.display, agent_id: c.agent_id });
     }
     tick(db, &actor.team_id).await?;
+    let by_display = if force { actor_display(db, actor).await? } else { String::new() };
 
     let now = now_ms();
+    let mut notices = Vec::new();
     let mut tx = begin(db).await?;
     let active = active_leases(&mut tx, &actor.team_id, now).await?;
-    let holders: Vec<LeaseRow> = active
+    let mut holders: Vec<LeaseRow> = active
         .iter()
         .filter(|l| l.agent_id != agent_id && conflicts(l.kind(), &l.repo, &l.scope, scope.kind, &repo, &scope.text))
         .cloned()
         .collect();
+    let mut took_over: Vec<String> = Vec::new();
+    let force_post = force && post_holder.is_some();
+    if force && (!holders.is_empty() || post_holder.is_some()) {
+        let mut all: Vec<Holder> = holders.iter().map(|l| Holder { display: l.display(), agent_id: Some(l.agent_id.clone()) }).collect();
+        if let Some(h) = post_holder.take().filter(|h| !all.iter().any(|x| x.agent_id.is_some() && x.agent_id == h.agent_id)) {
+            all.push(h);
+        }
+        if let Some(why) = force_refusal(&mut tx, actor, &scope, &all).await? {
+            return Err(AppError::Conflict(why));
+        }
+        force_release_in_tx(&mut tx, &holders, actor, &by_display, &note, now).await?;
+        for l in &holders {
+            notices.push(Notice::ForceReleased {
+                by: actor.clone(),
+                to: Recipient::Agent { id: l.agent_id.clone(), display: l.display() },
+                body: format!("{by_display} took over {} from you (force claim). Stop work on it.", l.scope),
+            });
+        }
+        took_over = all.into_iter().map(|h| h.display).collect();
+        holders.clear();
+    }
     if !holders.is_empty() {
         if !wait {
             return Ok(ClaimOutcome::Taken { scope, repo, holders });
@@ -644,10 +758,11 @@ pub async fn claim(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    deliver(db, notices).await;
 
     let mut post = None;
     if let Some(n) = scope.task_number() {
-        match claim_post(db, actor, n, false).await {
+        match claim_post(db, actor, n, force_post).await {
             Ok(p) => post = Some(p),
             Err(e) => {
                 // The post is claimed outside the lease system (e.g. a human in the dashboard).
@@ -663,17 +778,17 @@ pub async fn claim(
             }
         }
     }
-    Ok(ClaimOutcome::Granted { scope, repo, minutes, expires_at: expires, renewed, post })
+    Ok(ClaimOutcome::Granted { scope, repo, minutes, expires_at: expires, renewed, post, took_over })
 }
 
 #[derive(Debug, Default)]
 pub struct ReleaseOutcome {
-    pub released: Vec<String>,
+    pub released: Vec<Scope>,
     /// The release note (trimmed; empty if none).
     pub note: String,
     /// (scope, new holder) for waiters that got a freed scope.
     pub granted: Vec<(String, String)>,
-    pub left_queue: Vec<String>,
+    pub left_queue: Vec<Scope>,
     /// Posts whose status/notes were updated ("#12" scopes).
     pub posts: Vec<Post>,
     /// Problems updating "#n" posts (lease is released regardless).
@@ -715,19 +830,19 @@ pub async fn release(
             let data = json!({ "scope": l.scope, "repo": l.repo, "note": short_note, "lease": true });
             record_event(&mut *tx, actor, "released", None, data).await?;
         }
-        out.released.push(l.scope.clone());
+        out.released.push(l.to_scope());
     }
-    let my_waits: Vec<(i64, String)> = sqlx::query_as("SELECT id, scope FROM lease_waits WHERE agent_id = ?1 ORDER BY id")
+    let my_waits: Vec<(i64, String, String)> = sqlx::query_as("SELECT id, scope, kind FROM lease_waits WHERE agent_id = ?1 ORDER BY id")
         .bind(agent_id.as_str())
         .fetch_all(&mut *tx)
         .await?;
-    for (id, s) in my_waits.into_iter().filter(|(_, s)| matches(s)) {
+    for (id, s, kind) in my_waits.into_iter().filter(|(_, s, _)| matches(s)) {
         sqlx::query("DELETE FROM lease_waits WHERE id = ?1").bind(id).execute(&mut *tx).await?;
-        out.left_queue.push(s);
+        out.left_queue.push(Scope { kind: ScopeKind::parse(&kind), text: s });
     }
     if out.released.is_empty() && out.left_queue.is_empty() && scope.as_ref().is_none_or(|s| s.kind != ScopeKind::Task) {
-        let held: Vec<String> = mine.iter().map(|l| l.scope.clone()).collect();
-        let what = scope.as_ref().map(|s| s.text.clone()).unwrap_or_else(|| "anything".into());
+        let held: Vec<String> = mine.iter().map(|l| l.to_scope().label()).collect();
+        let what = scope.as_ref().map(Scope::label).unwrap_or_else(|| "anything".into());
         return Err(AppError::NotFound(if held.is_empty() {
             format!("you hold no lease on {what} (you hold none)")
         } else {
@@ -740,7 +855,7 @@ pub async fn release(
     tx.commit().await?;
 
     // Task scopes: hand the post back (or finish it) and leave the note.
-    let mut tasks: Vec<i64> = out.released.iter().filter_map(|s| s.strip_prefix('#')?.parse().ok()).collect();
+    let mut tasks: Vec<i64> = out.released.iter().filter_map(Scope::task_number).collect();
     if let Some(n) = scope.as_ref().and_then(Scope::task_number)
         && !tasks.contains(&n)
     {
@@ -753,8 +868,10 @@ pub async fn release(
             out.warnings.push(format!("#{n}: note not posted ({e})"));
         }
         let p = require_post(db, &actor.team_id, n).await;
-        let mine = p.as_ref().is_ok_and(|p| p.claimed_by.as_ref().is_some_and(|c| c.agent_id.as_deref() == Some(agent_id.as_str())));
-        if mine || status.is_some() {
+        let claimed = p.as_ref().ok().and_then(|p| p.claimed_by.as_ref());
+        let mine = claimed.is_some_and(|c| c.agent_id.as_deref() == Some(agent_id.as_str()));
+        // Someone else's claim: release_post explains whose it is and how to take it over.
+        if mine || status.is_some() || claimed.is_some() {
             match release_post(db, actor, n, status).await {
                 Ok(p) => out.posts.push(p),
                 Err(e) => out.warnings.push(format!("#{n}: {e}")),
@@ -772,6 +889,50 @@ pub async fn release_agent(db: &SqlitePool, actor: &Actor) -> AppResult<usize> {
         Err(AppError::NotFound(_)) => Ok(0),
         Err(e) => Err(e),
     }
+}
+
+/// A "#n" lease freed because its post was finished.
+#[derive(Debug)]
+pub struct TaskLeaseFreed {
+    /// Who held it ("paul/api").
+    pub holder: String,
+    /// (scope, new holder) for waiters that got it.
+    pub granted: Vec<(String, String)>,
+}
+
+/// Post #n was set to `status` (done/closed): free its task lease, whoever holds it, and grant it
+/// to the next waiter. The holder is told unless it is `by`. None if nobody held it.
+pub async fn release_task_lease(db: &SqlitePool, by: &Actor, number: i64, status: &str) -> AppResult<Option<TaskLeaseFreed>> {
+    let scope = format!("#{number}");
+    let by_display = actor_display(db, by).await?;
+    let now = now_ms();
+    let mut notices = Vec::new();
+    let mut tx = begin(db).await?;
+    expire_in_tx(&mut tx, &by.team_id, now, &mut notices).await?;
+    let rows: Vec<LeaseRow> = active_leases(&mut tx, &by.team_id, now)
+        .await?
+        .into_iter()
+        .filter(|l| l.kind() == ScopeKind::Task && l.scope == scope)
+        .collect();
+    let mut out = None;
+    if let Some(first) = rows.first() {
+        for l in &rows {
+            sqlx::query("DELETE FROM leases WHERE id = ?1").bind(l.id.as_str()).execute(&mut *tx).await?;
+            if by.agent_id.as_deref() != Some(l.agent_id.as_str()) {
+                notices.push(Notice::ForceReleased {
+                    by: by.clone(),
+                    to: Recipient::Agent { id: l.agent_id.clone(), display: l.display() },
+                    body: format!("{by_display} marked {scope} {status}; your lease on it is released."),
+                });
+            }
+        }
+        let freed = Freed { by, by_display, note: format!("{scope} is {status}"), rows: &rows };
+        let granted = grant_in_tx(&mut tx, &by.team_id, now, Some(&freed), &mut notices).await?;
+        out = Some(TaskLeaseFreed { holder: first.display(), granted });
+    }
+    tx.commit().await?;
+    deliver(db, notices).await;
+    Ok(out)
 }
 
 /// Take leases away from their holders on a human's behalf (`by`, no agent): task leases hand
@@ -1025,6 +1186,10 @@ mod tests {
         named_agent(&f.db, &f.team, user, name).await.1
     }
 
+    fn texts(v: &[Scope]) -> Vec<&str> {
+        v.iter().map(|s| s.text.as_str()).collect()
+    }
+
     fn taken(o: &ClaimOutcome) -> Vec<String> {
         match o {
             ClaimOutcome::Taken { holders, .. } => holders.iter().map(|h| format!("{} {}", h.display(), h.scope)).collect(),
@@ -1061,7 +1226,7 @@ mod tests {
         assert_eq!(checked[0].waiting, vec!["bob/ui"]);
 
         let r = release(&f.db, &api, Some("ci"), false, None, Some("  tests green ")).await.unwrap();
-        assert_eq!(r.released, vec!["ci"]);
+        assert_eq!(texts(&r.released), vec!["ci"]);
         assert_eq!(r.note, "tests green");
         assert_eq!(r.granted, vec![("ci".to_string(), "bob/ui".to_string())]);
         let v = list(&f.db, &f.team).await.unwrap();
@@ -1083,7 +1248,7 @@ mod tests {
 
         // release(all) frees everything.
         let r = release(&f.db, &api, None, true, None, None).await.unwrap();
-        assert_eq!(r.released, vec!["server/src/auth/**"]);
+        assert_eq!(texts(&r.released), vec!["server/src/auth/**"]);
         let o = claim(&f.db, &ui, repo, "server/src/auth/login.rs", None, None, false).await.unwrap();
         assert!(matches!(o, ClaimOutcome::Granted { .. }));
         let kinds: Vec<String> = collab::activity(&f.db, &f.team, None, None).await.unwrap().into_iter().map(|a| a.kind).collect();
@@ -1193,7 +1358,7 @@ mod tests {
         let mut s3 = collab::tests::session(&f.db, &f.team, &f.paul, "claude-code").await;
         let o = collab::hello(&f.db, &mut s3, "api", None, None).await.unwrap();
         assert!(o.adopted && o.agent.id == api.agent_id.clone().unwrap());
-        assert_eq!(release(&f.db, &api, Some("ci"), false, None, None).await.unwrap().released, vec!["ci"]);
+        assert_eq!(texts(&release(&f.db, &api, Some("ci"), false, None, None).await.unwrap().released), vec!["ci"]);
     }
 
     #[tokio::test]
@@ -1220,5 +1385,38 @@ mod tests {
         let d = collab::get_post(&f.db, &f.team, p.number).await.unwrap();
         assert!(d.post.claimed_by.is_none());
         assert_eq!(d.comments[0].body, "shipped in abc123");
+    }
+
+    #[tokio::test]
+    async fn force_over_a_dashboard_claim() {
+        let f = fixture().await;
+        let api = agent(&f, &f.paul, "api").await; // owner's agent
+        let ui = agent(&f, &f.bob, "ui").await; // member's agent
+        let bob = Actor { team_id: f.team.clone(), user_id: f.bob.clone(), agent_id: None };
+        let np = crate::models::NewPost { board: "backend".into(), title: "T".into(), body: String::new(), kind: Some("task".into()), status: None, priority: None };
+        let p = collab::create_post(&f.db, &api, np).await.unwrap();
+        collab::claim_post(&f.db, &bob, p.number, false).await.unwrap(); // a human, no lease
+        let tag = format!("#{}", p.number);
+        let force = ClaimOpts { force: true, ..Default::default() };
+
+        // A member's agent can't take it from a human (no inactivity to measure).
+        let e = claim_with(&f.db, &ui, None, &tag, force).await.unwrap_err();
+        assert!(e.to_string().contains(&format!("task {tag} is held by bob (a human)")), "{e}");
+        assert!(leases_of(&f, &ui).await.is_empty(), "no lease left behind");
+        // The owner's agent can.
+        match claim_with(&f.db, &api, None, &tag, force).await.unwrap() {
+            ClaimOutcome::Granted { took_over, post: Some(p), .. } => {
+                assert_eq!(took_over, vec!["bob"]);
+                assert_eq!(p.claimed_by.unwrap().display, "paul/api");
+            }
+            other => panic!("{other:?}"),
+        }
+        // Without contention force is a plain claim.
+        let o = claim_with(&f.db, &ui, None, "ci", force).await.unwrap();
+        assert!(matches!(o, ClaimOutcome::Granted { ref took_over, .. } if took_over.is_empty()), "{o:?}");
+    }
+
+    async fn leases_of(f: &collab::tests::Fixture, a: &Actor) -> Vec<LeaseRow> {
+        agent_leases(&f.db, a.agent_id.as_deref().unwrap()).await.unwrap()
     }
 }

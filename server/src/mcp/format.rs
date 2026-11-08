@@ -1,13 +1,17 @@
 //! Compact, agent-readable text renderings of domain values (tool results + hook context).
 
 use crate::{
-    domain::collab::{ago, leases::LeaseRow, truncate_chars},
+    domain::collab::{
+        ago,
+        leases::{LeaseRow, Scope},
+        truncate_chars, Mentioned,
+    },
     models::{Agent, Board, Comment, Ping, Post},
 };
 
-/// `Released ci ("tests green"); granted to bob/ui.` (scope named per grant when several were released).
-pub fn released_line(released: &[String], note: &str, granted: &[(String, String)]) -> String {
-    let mut s = format!("Released {}", released.join(", "));
+/// `Released resource ci ("tests green"); granted to bob/ui.` (scope named per grant when several were released).
+pub fn released_line(released: &[Scope], note: &str, granted: &[(String, String)]) -> String {
+    let mut s = format!("Released {}", released.iter().map(Scope::label).collect::<Vec<_>>().join(", "));
     if !note.is_empty() {
         s.push_str(&format!(" (\"{}\")", truncate_chars(note, 100)));
     }
@@ -190,18 +194,48 @@ pub fn recipient_label(display: &str) -> String {
     if display.contains('/') { display.to_string() } else { format!("@{display}") }
 }
 
+/// `Pinged: @paul, bob/ui (unknown: @foo).`; None when there were no pings or mentions.
+pub fn pinged_line(m: &Mentioned) -> Option<String> {
+    let unknown = (!m.unknown.is_empty())
+        .then(|| format!("unknown: {}", m.unknown.iter().map(|u| format!("@{u}")).collect::<Vec<_>>().join(", ")));
+    match (m.recipients.is_empty(), unknown) {
+        (true, None) => None,
+        (true, Some(u)) => Some(format!("Pinged nobody ({u}).")),
+        (false, u) => {
+            let who: Vec<String> = m.recipients.iter().map(|r| recipient_label(r)).collect();
+            Some(format!("Pinged: {}{}.", who.join(", "), u.map(|u| format!(" ({u})")).unwrap_or_default()))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use crate::domain::collab::leases::parse_scope;
+
     #[test]
     fn released_line_echoes_note_and_grants() {
-        let ci = vec!["ci".to_string()];
+        let ci = vec![parse_scope("ci").unwrap()];
         let grant = vec![("ci".to_string(), "bob/ui".to_string())];
-        assert_eq!(released_line(&ci, "tests green", &grant), r#"Released ci ("tests green"); granted to bob/ui."#);
-        assert_eq!(released_line(&ci, "tests green", &[]), r#"Released ci ("tests green")."#);
-        assert_eq!(released_line(&ci, "", &[]), "Released ci.");
-        let two = vec!["ci".to_string(), "web/**".to_string()];
-        assert_eq!(released_line(&two, "", &grant), "Released ci, web/**; granted ci to bob/ui.");
+        assert_eq!(released_line(&ci, "tests green", &grant), r#"Released resource ci ("tests green"); granted to bob/ui."#);
+        assert_eq!(released_line(&ci, "tests green", &[]), r#"Released resource ci ("tests green")."#);
+        assert_eq!(released_line(&ci, "", &[]), "Released resource ci.");
+        let two = vec![parse_scope("ci").unwrap(), parse_scope("web/**").unwrap()];
+        assert_eq!(released_line(&two, "", &grant), "Released resource ci, path web/**; granted ci to bob/ui.");
+        let mk = vec![parse_scope("path:Makefile").unwrap(), parse_scope("#3").unwrap()];
+        assert_eq!(released_line(&mk, "", &[]), "Released path Makefile, task #3.");
+    }
+
+    #[test]
+    fn pinged_line_lists_recipients_and_unknowns() {
+        let m = |r: &[&str], u: &[&str]| Mentioned {
+            recipients: r.iter().map(|s| s.to_string()).collect(),
+            unknown: u.iter().map(|s| s.to_string()).collect(),
+        };
+        assert_eq!(pinged_line(&m(&[], &[])), None);
+        assert_eq!(pinged_line(&m(&["paul", "bob/ui"], &[])).as_deref(), Some("Pinged: @paul, bob/ui."));
+        assert_eq!(pinged_line(&m(&["bob/ui"], &["foo", "types/node"])).as_deref(), Some("Pinged: bob/ui (unknown: @foo, @types/node)."));
+        assert_eq!(pinged_line(&m(&[], &["foo"])).as_deref(), Some("Pinged nobody (unknown: @foo)."));
     }
 }

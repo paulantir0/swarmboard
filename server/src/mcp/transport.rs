@@ -395,7 +395,7 @@ mod tests {
         let v = t.call(&s1, "claim", json!({"scope":"#1"})).await;
         assert_eq!(v["result"]["isError"], false, "{}", text(&v, 0));
         let v = t.call(&s1, "claim", json!({"scope":"server/src/auth/**","note":"refactor"})).await;
-        assert!(text(&v, 0).starts_with("Claimed server/src/auth/** in github.com/acme/app for 30m"), "{}", text(&v, 0));
+        assert!(text(&v, 0).starts_with("Claimed path server/src/auth/** in github.com/acme/app for 30m"), "{}", text(&v, 0));
 
         // Second session (same human): suffix on name clash, lease conflicts, queue.
         let s2 = t.init("codex-mcp-client").await;
@@ -406,16 +406,16 @@ mod tests {
         assert!(brief.contains("holds #1, server/src/auth/**"), "{brief}");
         let v = t.call(&s2, "check", json!({"paths":["server/src/auth/login.rs","web/x.ts"]})).await;
         let c = text(&v, 0);
-        assert!(c.contains("server/src/auth/login.rs: TAKEN by paul/probe (server/src/auth/** \"refactor\""), "{c}");
-        assert!(c.contains("web/x.ts: free"), "{c}");
+        assert!(c.contains("path server/src/auth/login.rs: TAKEN by paul/probe (server/src/auth/** \"refactor\""), "{c}");
+        assert!(c.contains("path web/x.ts: free"), "{c}");
         let v = t.call(&s2, "claim", json!({"scope":"server/src/auth/login.rs"})).await;
         assert_eq!(v["result"]["isError"], true);
-        assert!(text(&v, 0).starts_with("TAKEN: server/src/auth/login.rs overlaps:"), "{}", text(&v, 0));
+        assert!(text(&v, 0).starts_with("TAKEN: path server/src/auth/login.rs overlaps:"), "{}", text(&v, 0));
         let v = t.call(&s2, "claim", json!({"scope":"#1"})).await;
         assert_eq!(v["result"]["isError"], true);
         assert_eq!(t.call(&s1, "claim", json!({"scope":"ci"})).await["result"]["isError"], false);
         let v = t.call(&s2, "claim", json!({"scope":"ci","wait":true})).await;
-        assert!(text(&v, 0).starts_with("Queued for ci at position 1."), "{}", text(&v, 0));
+        assert!(text(&v, 0).starts_with("Queued for resource ci at position 1."), "{}", text(&v, 0));
 
         // Send s1 a message from s2; s1's next tool result carries it.
         let v = t.call(&s2, "send", json!({"to":"paul/probe","message":"want me to take the tests?","re":1})).await;
@@ -427,14 +427,14 @@ mod tests {
 
         // Release ci → s2 granted + pinged; release #1 as done with a note.
         let v = t.call(&s1, "release", json!({"scope":"ci","note":"tests green"})).await;
-        assert_eq!(text(&v, 0), "Released ci (\"tests green\"); granted to paul/probe-2.");
+        assert_eq!(text(&v, 0), "Released resource ci (\"tests green\"); granted to paul/probe-2.");
         let v = t.call(&s2, "claims", json!({})).await;
         assert!(text(&v, 0).contains("ci — paul/probe-2 (you)"), "{}", text(&v, 0));
         assert!(text(&v, 1).contains("you now hold ci (you were queued). paul/probe released it: \"tests green\"."), "{}", text(&v, 1));
         let v = t.call(&s1, "release", json!({"scope":"#1","status":"done","note":"fixed in abc"})).await;
         assert!(text(&v, 0).contains("#1 [done]"), "{}", text(&v, 0));
         let v = t.call(&s2, "reply", json!({"number":1,"body":"thanks"})).await;
-        assert_eq!(text(&v, 0), "Replied on #1. Notified paul/probe.");
+        assert_eq!(text(&v, 0), "Replied on #1. Pinged: paul/probe.");
         let v = t.call(&s1, "read", json!({"number":1})).await;
         assert!(text(&v, 0).contains("fixed in abc") && text(&v, 1).contains("replied on #1"), "{v}");
 

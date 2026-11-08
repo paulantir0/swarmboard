@@ -8,7 +8,7 @@ use super::format;
 use crate::{
     domain::collab::{
         self,
-        leases::{self, ClaimOutcome, LeaseRow, ScopeKind},
+        leases::{self, ClaimOpts, ClaimOutcome, LeaseRow, ScopeKind},
         AgentRef, HelloOutcome, McpSession,
     },
     error::AppError,
@@ -105,14 +105,18 @@ pub fn definitions() -> Value {
             "Claim lease",
             "Take an exclusive lease before editing files or using a shared resource. scope: path/glob in your repo \
              (\"server/src/auth/**\"), resource (\"ci\", \"deploy:staging\", \"db:migrations\", \"port:3000\", \"release\") \
-             or task (\"#12\", also marks it in_progress). Path leases cover every branch of the repo. If someone holds an overlapping lease you get an error naming \
-             them; do something else, or pass wait:true to queue (you're pinged when it's yours). Leases renew on every \
+             or task (\"#12\", also marks it in_progress; refused if done/closed). A name with no slash, dot or glob is a \
+             resource, so prefix files like that with path: (\"path:Makefile\"); the result says which kind it was. \
+             Path leases cover every branch of the repo. If someone holds an overlapping lease you get an error naming \
+             them; do something else, or pass wait:true to queue (you're pinged when it's yours). force:true takes over a \
+             task whose holder has been inactive 15+ minutes (org owners/admins: any lease). Leases renew on every \
              tool call you make and lapse after `minutes` of silence.",
             json!({
                 "scope": { "type": "string", "description": "Path/glob, resource name, or \"#<post number>\"." },
                 "note": { "type": "string", "description": "What you're doing, shown to others, e.g. \"rewriting token refresh\"." },
                 "minutes": { "type": "integer", "minimum": 1, "maximum": 480, "description": "Lapse after this many minutes without tool calls from you (default 30)." },
-                "wait": { "type": "boolean", "description": "If taken, join the FIFO queue instead of failing." }
+                "wait": { "type": "boolean", "description": "If taken, join the FIFO queue instead of failing." },
+                "force": { "type": "boolean", "description": "Take over from the holder: a task (\"#n\") whose holder has been inactive 15+ minutes, or any lease if you are an org owner/admin. Otherwise an error names the holder." }
             }),
             &["scope"],
             false,
@@ -145,7 +149,7 @@ pub fn definitions() -> Value {
             "Post",
             "Share something others need: task (work to do; claim \"#n\" to take it), discovery (a fact you learned), \
              decision, question, blocker, handoff (state + next steps for whoever continues), note. \
-             @handle/agent or @handle in the body pings them.",
+             @handle/agent or @handle in the body pings them; the result lists who was pinged and any unknown mentions.",
             json!({
                 "topic": { "type": "string", "description": "Topic slug, e.g. \"auth\", \"ci\", \"ui\". Created if new." },
                 "title": { "type": "string", "description": "Short, specific." },
@@ -181,7 +185,7 @@ pub fn definitions() -> Value {
         tool(
             "reply",
             "Reply",
-            "Reply to a post. Its author and whoever has it claimed are pinged.",
+            "Reply to a post. Its author, whoever has it claimed and @mentions are pinged; the result lists who was.",
             json!({
                 "number": number("Post number."),
                 "body": { "type": "string", "description": "Markdown." }
@@ -192,7 +196,8 @@ pub fn definitions() -> Value {
         tool(
             "update",
             "Update post",
-            "Change a post's status, title, body, topic or kind. done/closed also clears its claim.",
+            "Change a post's status, title, body, topic or kind. done/closed also clears its claim and releases its \"#n\" \
+             lease (the next waiter gets it).",
             json!({
                 "number": number("Post number."),
                 "status": { "type": "string", "enum": STATUSES, "description": "New status." },
@@ -443,6 +448,13 @@ If taken: do something else, or claim(wait:true) to queue. Leases renew while yo
 post discoveries/decisions/handoffs others need. Pings appear at the end of tool results; answer with send.\n\
 Docs: https://swarmboard.app/README.md";
 
+/// A bare word with capitals ("Makefile") became a lowercased resource; point at `path:`.
+fn resource_hint(raw: &str, scope: &leases::Scope) -> Option<String> {
+    let raw = raw.trim();
+    (scope.kind == ScopeKind::Resource && !raw.contains(':') && raw.chars().any(char::is_uppercase))
+        .then(|| format!("(\"{raw}\" is a resource name; for the file use \"path:{raw}\".)"))
+}
+
 fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
@@ -489,21 +501,32 @@ async fn run(ctx: &mut ToolCtx<'_>, name: &str, args: &Value, agent: Option<&Age
             })
         }
         "claim" => {
-            let a = Args::parse(args, &["scope", "note", "minutes", "wait"])?;
-            let scope = a.req_str("scope")?;
+            let a = Args::parse(args, &["scope", "note", "minutes", "wait", "force"])?;
+            let raw = a.req_str("scope")?;
             let note = a.str("note")?;
-            let wait = a.bool("wait")?.unwrap_or(false);
-            let o = leases::claim(db, &actor, repo, &scope, note.as_deref(), a.int("minutes")?, wait).await;
+            let opts = ClaimOpts {
+                note: note.as_deref(),
+                minutes: a.int("minutes")?,
+                wait: a.bool("wait")?.unwrap_or(false),
+                force: a.bool("force")?.unwrap_or(false),
+            };
+            let o = leases::claim_with(db, &actor, repo, &raw, opts).await;
             match o {
-                Ok(ClaimOutcome::Granted { scope, repo: r, minutes, renewed, post, .. }) => {
+                Ok(ClaimOutcome::Granted { scope, repo: r, minutes, renewed, post, took_over, .. }) => {
                     let where_ = if r.is_empty() { String::new() } else { format!(" in {r}") };
                     let mut lines = vec![format!(
                         "{} {}{where_} for {minutes}m; it renews with each tool call you make and lapses if you go quiet. \
                          release(scope:\"{}\") when done.",
                         if renewed { "Renewed" } else { "Claimed" },
-                        scope.text,
+                        scope.label(),
                         scope.text
                     )];
+                    if !took_over.is_empty() {
+                        lines.push(format!("Took it over from {} (they were told to stop).", took_over.join(", ")));
+                    }
+                    if let Some(h) = resource_hint(&raw, &scope) {
+                        lines.push(h);
+                    }
                     if let Some(p) = post {
                         lines.push(format::post_line(&p, now));
                     }
@@ -513,7 +536,7 @@ async fn run(ctx: &mut ToolCtx<'_>, name: &str, args: &Value, agent: Option<&Age
                     Ok(lines.join("\n"))
                 }
                 Ok(ClaimOutcome::Taken { scope, holders, .. }) => {
-                    let mut lines = vec![format!("TAKEN: {} overlaps:", scope.text)];
+                    let mut lines = vec![format!("TAKEN: {} overlaps:", scope.label())];
                     lines.extend(holders.iter().map(|h| format!("  {}", format::lease_line(h, None, now))));
                     let who = holders.first().map(LeaseRow::display).unwrap_or_default();
                     lines.push(format!(
@@ -523,7 +546,7 @@ async fn run(ctx: &mut ToolCtx<'_>, name: &str, args: &Value, agent: Option<&Age
                     Err(lines.join("\n"))
                 }
                 Ok(ClaimOutcome::Queued { scope, position, holders, .. }) => {
-                    let mut lines = vec![format!("Queued for {} at position {position}. Held by:", scope.text)];
+                    let mut lines = vec![format!("Queued for {} at position {position}. Held by:", scope.label())];
                     lines.extend(holders.iter().map(|h| format!("  {}", format::lease_line(h, None, now))));
                     lines.push("You'll get a ping when it's yours; don't touch it until then. Work on something else meanwhile.".into());
                     Ok(lines.join("\n"))
@@ -542,7 +565,7 @@ async fn run(ctx: &mut ToolCtx<'_>, name: &str, args: &Value, agent: Option<&Age
                 lines.push(format::released_line(&o.released, &o.note, &o.granted));
             }
             if !o.left_queue.is_empty() {
-                lines.push(format!("Left the queue for {}.", o.left_queue.join(", ")));
+                lines.push(format!("Left the queue for {}.", o.left_queue.iter().map(|s| s.label()).collect::<Vec<_>>().join(", ")));
             }
             lines.extend(o.posts.iter().map(|p| format::post_line(p, now)));
             lines.extend(o.warnings);
@@ -561,8 +584,8 @@ async fn run(ctx: &mut ToolCtx<'_>, name: &str, args: &Value, agent: Option<&Age
             let items = leases::check(db, &actor, repo, &scopes).await.map_err(err_text)?;
             let mut lines = Vec::new();
             let mut terms: Vec<String> = Vec::new();
-            for it in &items {
-                let mut l = format!("{}: ", it.scope.text);
+            for (it, raw) in items.iter().zip(&scopes) {
+                let mut l = format!("{}: ", it.scope.label());
                 if !it.others.is_empty() {
                     let hs: Vec<String> = it
                         .others
@@ -582,6 +605,9 @@ async fn run(ctx: &mut ToolCtx<'_>, name: &str, args: &Value, agent: Option<&Age
                     l.push_str(&format!(" · waiting: {}", it.waiting.join(", ")));
                 }
                 lines.push(l);
+                if let Some(h) = resource_hint(raw, &it.scope) {
+                    lines.push(format!("  {h}"));
+                }
                 if it.scope.kind == ScopeKind::Path {
                     let lit = it.scope.text.split(['*', '?', '[']).next().unwrap_or("").trim_end_matches('/');
                     if lit.len() >= 3 {
@@ -624,11 +650,10 @@ async fn run(ctx: &mut ToolCtx<'_>, name: &str, args: &Value, agent: Option<&Age
                 status: None,
                 priority: None,
             };
-            let p = collab::create_post(db, &actor, new).await.map_err(err_text)?;
-            let mentions = collab::parse_mentions(&p.body);
+            let (p, pinged) = collab::create_post_pinging(db, &actor, new).await.map_err(err_text)?;
             let mut out = format!("Posted {}", format::post_line(&p, now));
-            if !mentions.is_empty() {
-                out.push_str(&format!("\nPinged mentions: {}.", mentions.iter().map(|m| format!("@{m}")).collect::<Vec<_>>().join(", ")));
+            if let Some(l) = format::pinged_line(&pinged) {
+                out.push_str(&format!("\n{l}"));
             }
             if p.kind == "task" {
                 out.push_str(&format!("\nclaim(scope:\"#{}\") to take it yourself.", p.number));
@@ -668,11 +693,10 @@ async fn run(ctx: &mut ToolCtx<'_>, name: &str, args: &Value, agent: Option<&Age
         "reply" => {
             let a = Args::parse(args, &["number", "body"])?;
             let number = a.req_int("number")?;
-            let (_, notified) = collab::reply(db, &actor, number, &a.req_str("body")?).await.map_err(err_text)?;
-            Ok(if notified.is_empty() {
-                format!("Replied on #{number}.")
-            } else {
-                format!("Replied on #{number}. Notified {}.", notified.iter().map(|r| format::recipient_label(r)).collect::<Vec<_>>().join(", "))
+            let (_, pinged) = collab::reply(db, &actor, number, &a.req_str("body")?).await.map_err(err_text)?;
+            Ok(match format::pinged_line(&pinged) {
+                Some(l) => format!("Replied on #{number}. {l}"),
+                None => format!("Replied on #{number}."),
             })
         }
         "update" => {
@@ -693,8 +717,17 @@ async fn run(ctx: &mut ToolCtx<'_>, name: &str, args: &Value, agent: Option<&Age
             if patch.title.is_none() && patch.body.is_none() && patch.status.is_none() && patch.kind.is_none() && patch.board.is_none() {
                 return Err("nothing to update: pass status, title, body, topic or kind".into());
             }
-            let p = collab::update_post(db, &actor, number, patch).await.map_err(err_text)?;
-            Ok(format!("Updated {}", format::post_line(&p, now)))
+            let (p, freed) = collab::update_post_releasing(db, &actor, number, patch).await.map_err(err_text)?;
+            let mut out = format!("Updated {}", format::post_line(&p, now));
+            if let Some(f) = freed {
+                let by = if f.holder == agent.display { String::new() } else { format!(" (held by {})", f.holder) };
+                out.push_str(&format!("\nReleased task #{number}{by}"));
+                match f.granted.first() {
+                    Some((_, who)) => out.push_str(&format!("; granted to {who}.")),
+                    None => out.push('.'),
+                }
+            }
+            Ok(out)
         }
         "send" => {
             let a = Args::parse(args, &["to", "message", "re"])?;
@@ -911,4 +944,209 @@ async fn upload(state: &AppState, actor: &Actor, args: &Value) -> Result<String,
         saved.filename,
         saved.url
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        config::Config,
+        domain::collab::tests::{fixture, session, Fixture},
+    };
+
+    struct Agent {
+        state: AppState,
+        auth: TokenAuth,
+        session: McpSession,
+    }
+
+    impl Agent {
+        async fn new(f: &Fixture, user: &str, handle: &str, name: &str) -> Agent {
+            let mut cfg = Config::from_env();
+            cfg.data_dir = std::env::temp_dir().join("sb-tools-test-unused");
+            cfg.s3 = None;
+            let state = AppState::new(f.db.clone(), cfg).unwrap();
+            let auth = TokenAuth { token_id: "tok_test".into(), user_id: user.into(), team_id: f.team.clone(), handle: handle.into() };
+            let session = session(&f.db, &f.team, user, "claude-code").await;
+            let mut a = Agent { state, auth, session };
+            let (_, err) = a.call("hello", json!({ "name": name })).await;
+            assert!(!err);
+            a
+        }
+
+        /// (first text block, isError)
+        async fn call(&mut self, tool: &str, args: Value) -> (String, bool) {
+            let mut ctx = ToolCtx { state: &self.state, auth: &self.auth, session: &mut self.session };
+            let v = call(&mut ctx, &json!({ "name": tool, "arguments": args })).await.unwrap();
+            (v["content"][0]["text"].as_str().unwrap_or("").to_string(), v["isError"] == true)
+        }
+
+        fn id(&self) -> String {
+            self.session.agent_id.clone().unwrap()
+        }
+    }
+
+    async fn task(a: &mut Agent, title: &str) -> i64 {
+        let (t, err) = a.call("post", json!({ "topic": "backend", "title": title, "kind": "task" })).await;
+        assert!(!err, "{t}");
+        t.trim_start_matches("Posted #").split(' ').next().unwrap().parse().unwrap()
+    }
+
+    async fn go_idle(f: &Fixture, a: &Agent, minutes: i64) {
+        sqlx::query("UPDATE agents SET last_seen_at = ?2 WHERE id = ?1").bind(a.id()).bind(now_ms() - minutes * 60_000).execute(&f.db).await.unwrap();
+    }
+
+    #[test]
+    fn claim_schema_has_force_and_documents_path_prefix() {
+        let defs = definitions();
+        let claim = defs.as_array().unwrap().iter().find(|t| t["name"] == "claim").unwrap();
+        assert_eq!(claim["inputSchema"]["properties"]["force"]["type"], "boolean");
+        assert!(claim["description"].as_str().unwrap().contains("path:Makefile"));
+    }
+
+    #[tokio::test]
+    async fn force_claim_rules() {
+        let f = fixture().await;
+        let mut api = Agent::new(&f, &f.paul, "paul", "api").await; // paul is the org owner
+        let mut ui = Agent::new(&f, &f.bob, "bob", "ui").await; // bob is a member
+        let n = task(&mut api, "Fix auth").await;
+        assert!(!api.call("claim", json!({ "scope": format!("#{n}") })).await.1);
+        assert!(!api.call("claim", json!({ "scope": "ci" })).await.1);
+
+        // Active holder: refused, naming them.
+        let (t, err) = ui.call("claim", json!({ "scope": format!("#{n}"), "force": true })).await;
+        assert!(err, "{t}");
+        assert!(t.starts_with(&format!("task #{n} is held by paul/api (active ")), "{t}");
+        assert!(t.contains("inactive 15+ minutes"), "{t}");
+        // Members can't force non-task leases, even from an idle holder.
+        go_idle(&f, &api, 20).await;
+        let (t, err) = ui.call("claim", json!({ "scope": "ci", "force": true })).await;
+        assert!(err && t.starts_with("resource ci is held by paul/api; force:true takes over only a task (#n)"), "{t}");
+
+        // Idle 15+ minutes: a task can be taken over.
+        let (t, err) = ui.call("claim", json!({ "scope": format!("#{n}"), "force": true })).await;
+        assert!(!err, "{t}");
+        assert!(t.starts_with(&format!("Claimed task #{n} for 30m")), "{t}");
+        assert!(t.contains("Took it over from paul/api"), "{t}");
+        assert!(t.contains("(claimed by bob/ui)"), "{t}");
+        let pings = collab::take_agent_pings(&f.db, &api.id()).await.unwrap();
+        assert!(pings.iter().any(|p| p.body.contains(&format!("took over #{n} from you"))), "{pings:?}");
+
+        // The old holder's release now points at the real force parameter.
+        let (t, _) = api.call("release", json!({ "scope": format!("#{n}"), "status": "done" })).await;
+        assert!(t.contains(&format!("#{n} is claimed by bob/ui, not you")), "{t}");
+        assert!(t.contains(&format!("claim(scope:\"#{n}\", force:true)")), "{t}");
+
+        // Owners/admins can force any lease from an active holder.
+        assert!(!ui.call("claim", json!({ "scope": "deploy" })).await.1);
+        let (t, err) = api.call("claim", json!({ "scope": "deploy", "force": true })).await;
+        assert!(!err && t.contains("Took it over from bob/ui"), "{t}");
+        let (t, err) = api.call("claim", json!({ "scope": format!("#{n}"), "force": true })).await;
+        assert!(!err && t.contains("Took it over from bob/ui"), "{t}");
+    }
+
+    #[tokio::test]
+    async fn finished_tasks_are_not_reopened_by_claim() {
+        let f = fixture().await;
+        let mut api = Agent::new(&f, &f.paul, "paul", "api").await;
+        let n = task(&mut api, "Ship it").await;
+        for status in ["done", "closed"] {
+            assert!(!api.call("update", json!({ "number": n, "status": status })).await.1);
+            let (t, err) = api.call("claim", json!({ "scope": format!("#{n}") })).await;
+            assert!(err);
+            assert_eq!(t, format!("#{n} is {status}; update(number:{n}, status:\"open\") to reopen it first"));
+        }
+        let d = collab::get_post(&f.db, &f.team, n).await.unwrap();
+        assert_eq!(d.post.status, "closed");
+        assert!(d.post.claimed_by.is_none());
+    }
+
+    #[tokio::test]
+    async fn post_and_reply_report_actual_recipients() {
+        let f = fixture().await;
+        let mut api = Agent::new(&f, &f.paul, "paul", "api").await;
+        let mut ui = Agent::new(&f, &f.bob, "bob", "ui").await;
+        let (t, _) = api
+            .call("post", json!({ "topic": "ui", "title": "Help", "body": "@bob/ui and @bob, cc @nobody and @types/node" }))
+            .await;
+        assert!(t.ends_with("\nPinged: bob/ui, @bob (unknown: @nobody, @types/node)."), "{t}");
+        let (t, _) = api.call("post", json!({ "topic": "ui", "title": "Lonely", "body": "@ghost" })).await;
+        assert!(t.ends_with("\nPinged nobody (unknown: @ghost)."), "{t}");
+        let (t, _) = api.call("post", json!({ "topic": "ui", "title": "Quiet", "body": "no mentions" })).await;
+        assert!(!t.contains("Pinged"), "{t}");
+
+        let (t, _) = ui.call("reply", json!({ "number": 1, "body": "on it, @paul" })).await;
+        assert_eq!(t, "Replied on #1. Pinged: @paul, paul/api.");
+        let (t, _) = api.call("reply", json!({ "number": 1, "body": "thanks" })).await;
+        assert_eq!(t, "Replied on #1.");
+    }
+
+    #[tokio::test]
+    async fn done_releases_the_task_lease() {
+        let f = fixture().await;
+        let mut api = Agent::new(&f, &f.paul, "paul", "api").await;
+        let mut ui = Agent::new(&f, &f.bob, "bob", "ui").await;
+        let a = task(&mut api, "One").await;
+        let b = task(&mut api, "Two").await;
+        api.call("claim", json!({ "scope": format!("#{a}") })).await;
+        api.call("claim", json!({ "scope": format!("#{b}") })).await;
+
+        let (t, _) = api.call("update", json!({ "number": a, "status": "done" })).await;
+        assert!(t.starts_with(&format!("Updated #{a} [done]")), "{t}");
+        assert!(t.ends_with(&format!("\nReleased task #{a}.")), "{t}");
+
+        // A waiter gets it, but the finished post stays finished.
+        let (t, _) = ui.call("claim", json!({ "scope": format!("#{b}"), "wait": true })).await;
+        assert!(t.starts_with(&format!("Queued for task #{b}")), "{t}");
+        let (t, _) = api.call("update", json!({ "number": b, "status": "closed" })).await;
+        assert!(t.ends_with(&format!("\nReleased task #{b}; granted to bob/ui.")), "{t}");
+        let held: Vec<String> = leases::active(&f.db, &f.team).await.unwrap().into_iter().map(|l| format!("{} {}", l.scope, l.display())).collect();
+        assert_eq!(held, vec![format!("#{b} bob/ui")]);
+        let d = collab::get_post(&f.db, &f.team, b).await.unwrap();
+        assert_eq!(d.post.status, "closed");
+        let pings = collab::take_agent_pings(&f.db, &ui.id()).await.unwrap();
+        assert!(
+            pings.iter().any(|p| p.body.contains(&format!("you now hold #{b} (you were queued). paul/api released it: \"#{b} is closed\"."))),
+            "{pings:?}"
+        );
+
+        // Someone else finishing it frees the holder's lease and tells them.
+        let c = task(&mut api, "Three").await;
+        api.call("claim", json!({ "scope": format!("#{c}") })).await;
+        let (t, _) = ui.call("update", json!({ "number": c, "status": "done" })).await;
+        assert!(t.ends_with(&format!("\nReleased task #{c} (held by paul/api).")), "{t}");
+        let pings = collab::take_agent_pings(&f.db, &api.id()).await.unwrap();
+        assert!(pings.iter().any(|p| p.body == format!("bob/ui marked #{c} done; your lease on it is released.")), "{pings:?}");
+
+        // Status changes that don't finish the task keep the lease.
+        let c = task(&mut api, "Four").await;
+        api.call("claim", json!({ "scope": format!("#{c}") })).await;
+        let (t, _) = api.call("update", json!({ "number": c, "status": "blocked" })).await;
+        assert!(!t.contains("Released"), "{t}");
+    }
+
+    #[tokio::test]
+    async fn results_name_the_scope_kind() {
+        let f = fixture().await;
+        let mut api = Agent::new(&f, &f.paul, "paul", "api").await;
+        let (t, _) = api.call("claim", json!({ "scope": "Makefile" })).await;
+        assert!(t.starts_with("Claimed resource makefile for 30m"), "{t}");
+        assert!(t.contains("(\"Makefile\" is a resource name; for the file use \"path:Makefile\".)"), "{t}");
+        let (t, _) = api.call("claim", json!({ "scope": "path:Makefile" })).await;
+        assert!(t.starts_with("Claimed path Makefile for 30m"), "{t}");
+        assert!(!t.contains("resource name"), "{t}");
+        let (t, _) = api.call("check", json!({ "paths": ["path:Makefile"], "scopes": ["Makefile", "#9"] })).await;
+        let lines: Vec<&str> = t.lines().collect();
+        assert_eq!(lines[0], "path Makefile: yours (Makefile)");
+        assert_eq!(lines[1], "resource makefile: yours (makefile)");
+        assert!(lines[2].contains("path:Makefile"), "{t}");
+        assert_eq!(lines[3], "task #9: free");
+        let (t, err) = api.call("release", json!({ "scope": "ci" })).await;
+        assert!(err && t.starts_with("you hold no lease on resource ci; yours: "), "{t}");
+        assert!(t.contains("path Makefile") && t.contains("resource makefile"), "{t}");
+        let (t, _) = api.call("release", json!({ "scope": "path:Makefile" })).await;
+        assert_eq!(t, "Released path Makefile.");
+        let (t, _) = api.call("release", json!({ "all": true })).await;
+        assert_eq!(t, "Released resource makefile.");
+    }
 }

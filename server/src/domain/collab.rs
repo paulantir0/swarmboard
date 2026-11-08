@@ -527,6 +527,11 @@ pub async fn list_posts(db: &SqlitePool, team_id: &str, filter: &PostFilter) -> 
 
 /// Assigns the next per-team number atomically. Parses @mentions in the body and pings them.
 pub async fn create_post(db: &SqlitePool, actor: &Actor, new: NewPost) -> AppResult<Post> {
+    Ok(create_post_pinging(db, actor, new).await?.0)
+}
+
+/// `create_post`, also reporting who the body's @mentions reached.
+pub async fn create_post_pinging(db: &SqlitePool, actor: &Actor, new: NewPost) -> AppResult<(Post, Mentioned)> {
     let title = validate_title(&new.title)?;
     validate_body(&new.body)?;
     let kind = validate_kind(new.kind.as_deref().unwrap_or("note"))?;
@@ -572,8 +577,8 @@ pub async fn create_post(db: &SqlitePool, actor: &Actor, new: NewPost) -> AppRes
         .await?;
     tx.commit().await?;
 
-    ping_mentions(db, actor, &new.body, &id, number, &title, &HashSet::new()).await?;
-    require_post(db, &actor.team_id, number).await
+    let mentioned = ping_mentions(db, actor, &new.body, &id, number, &title, &HashSet::new()).await?;
+    Ok((require_post(db, &actor.team_id, number).await?, mentioned))
 }
 
 pub async fn get_post(db: &SqlitePool, team_id: &str, number: i64) -> AppResult<PostDetail> {
@@ -624,6 +629,27 @@ async fn comments_for(db: &SqlitePool, post_id: &str, number: i64) -> AppResult<
 }
 
 pub async fn update_post(db: &SqlitePool, actor: &Actor, number: i64, patch: PostPatch) -> AppResult<Post> {
+    Ok(update_post_releasing(db, actor, number, patch).await?.0)
+}
+
+/// `update_post`; setting done/closed also releases the post's "#n" lease (granting it to the
+/// next waiter), which is returned.
+pub async fn update_post_releasing(
+    db: &SqlitePool,
+    actor: &Actor,
+    number: i64,
+    patch: PostPatch,
+) -> AppResult<(Post, Option<leases::TaskLeaseFreed>)> {
+    let finished = patch.status.as_deref().and_then(|s| validate_status(s).ok()).filter(|s| s == "done" || s == "closed");
+    let post = apply_post_patch(db, actor, number, patch).await?;
+    let freed = match finished {
+        Some(status) => leases::release_task_lease(db, actor, number, &status).await?,
+        None => None,
+    };
+    Ok((post, freed))
+}
+
+async fn apply_post_patch(db: &SqlitePool, actor: &Actor, number: i64, patch: PostPatch) -> AppResult<Post> {
     let before = require_post(db, &actor.team_id, number).await?;
     let title = patch.title.as_deref().map(validate_title).transpose()?;
     if let Some(b) = &patch.body {
@@ -772,8 +798,10 @@ pub async fn release_post(db: &SqlitePool, actor: &Actor, number: i64, status: O
         // Humans in the dashboard may release anything (e.g. a stuck agent's claim).
         if !mine && actor.agent_id.is_some() {
             return Err(AppError::Conflict(format!(
-                "#{number} is claimed by {}, not you; ping them, or claim it with force=true to take over",
-                holder.display
+                "#{number} is claimed by {who}, not you; send(to:\"{who}\") to coordinate, or if they've been inactive \
+                 {}+ minutes, claim(scope:\"#{number}\", force:true) to take it over",
+                leases::FORCE_IDLE_MS / 60_000,
+                who = holder.display
             )));
         }
     }
@@ -803,6 +831,10 @@ pub async fn release_post(db: &SqlitePool, actor: &Actor, number: i64, status: O
 
 /// Parses @mentions in the body and pings them.
 pub async fn add_comment(db: &SqlitePool, actor: &Actor, number: i64, body: &str) -> AppResult<Comment> {
+    Ok(add_comment_pinging(db, actor, number, body).await?.0)
+}
+
+async fn add_comment_pinging(db: &SqlitePool, actor: &Actor, number: i64, body: &str) -> AppResult<(Comment, Mentioned)> {
     let body = body.trim();
     if body.is_empty() {
         return Err(bad("comment body is required"));
@@ -828,15 +860,15 @@ pub async fn add_comment(db: &SqlitePool, actor: &Actor, number: i64, body: &str
     .await?;
     sqlx::query("UPDATE posts SET updated_at = ?2 WHERE id = ?1").bind(post.id.as_str()).bind(now).execute(db).await?;
     record_event(db, actor, "commented", Some(&post.id), json!({ "comment_id": id, "excerpt": excerpt(body, 140) })).await?;
-    ping_mentions(db, actor, body, &post.id, number, &post.title, &HashSet::new()).await?;
+    let mentioned = ping_mentions(db, actor, body, &post.id, number, &post.title, &HashSet::new()).await?;
     let row: CommentRow = sqlx::query_as(concat!(comment_select!(), "WHERE c.id = ?1")).bind(id.as_str()).fetch_one(db).await?;
-    Ok(row.into_comment(number))
+    Ok((row.into_comment(number), mentioned))
 }
 
 /// Comment on a post and ping its author and claimer (unless they wrote it or were @mentioned).
-/// Returns the comment and who was notified.
-pub async fn reply(db: &SqlitePool, actor: &Actor, number: i64, body: &str) -> AppResult<(Comment, Vec<String>)> {
-    let c = add_comment(db, actor, number, body).await?;
+/// Returns the comment and everyone it pinged (@mentions, author, claimer).
+pub async fn reply(db: &SqlitePool, actor: &Actor, number: i64, body: &str) -> AppResult<(Comment, Mentioned)> {
+    let (c, mut pinged) = add_comment_pinging(db, actor, number, body).await?;
     let post = require_post(db, &actor.team_id, number).await?;
     let mentioned: HashSet<String> = parse_mentions(&c.body).into_iter().collect();
     let mut recips: Vec<Recipient> = Vec::new();
@@ -852,13 +884,18 @@ pub async fn reply(db: &SqlitePool, actor: &Actor, number: i64, body: &str) -> A
         recips.push(r);
     }
     if recips.is_empty() {
-        return Ok((c, Vec::new()));
+        return Ok((c, pinged));
     }
     let me = actor_display(db, actor).await?;
     let text = format!("{me} replied on #{number} \"{}\": {}", truncate_chars(&post.title, 80), excerpt(&c.body, 400));
     let target = recips.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(",");
     let sent = deliver_ping(db, actor, &target, &text, Some(&post.id), &recips, false).await?;
-    Ok((c, sent.recipients))
+    for r in sent.recipients {
+        if !pinged.recipients.contains(&r) {
+            pinged.recipients.push(r);
+        }
+    }
+    Ok((c, pinged))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1176,6 +1213,14 @@ async fn deliver_ping(
     Ok(PingSent { ping_id: id, recipients })
 }
 
+/// Who a post/comment pinged: recipient displays ("paul", "bob/ui"), plus @mentions that matched
+/// nobody (e.g. `@types/node` in prose; tokens without the @).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Mentioned {
+    pub recipients: Vec<String>,
+    pub unknown: Vec<String>,
+}
+
 /// Ping everyone mentioned in `body` (except those already mentioned before, in `skip`).
 async fn ping_mentions(
     db: &SqlitePool,
@@ -1185,26 +1230,33 @@ async fn ping_mentions(
     number: i64,
     title: &str,
     skip: &HashSet<String>,
-) -> AppResult<()> {
+) -> AppResult<Mentioned> {
+    let mut out = Mentioned::default();
     let mentions: Vec<String> =
         parse_mentions(body).into_iter().filter(|m| !skip.contains(m)).take(MAX_MENTIONS).collect();
     if mentions.is_empty() {
-        return Ok(());
+        return Ok(out);
     }
     let mut done: HashSet<String> = HashSet::new();
     let text = format!("mentioned you on #{number} \"{}\": {}", truncate_chars(title, 80), excerpt(body, 280));
     for m in mentions {
-        // Mentions of unknown handles (e.g. `@types/node` in prose) are silently ignored.
-        let Ok(recips) = resolve_target(db, actor, &format!("@{m}")).await else {
-            continue;
+        // Unknown handles are skipped (and reported); mentioning yourself is just skipped.
+        let recips = match resolve_target(db, actor, &format!("@{m}")).await {
+            Ok(r) => r,
+            Err(AppError::NotFound(_)) => {
+                out.unknown.push(m);
+                continue;
+            }
+            Err(_) => continue,
         };
         let recips: Vec<Recipient> = recips.into_iter().filter(|r| done.insert(r.key())).collect();
         if recips.is_empty() {
             continue;
         }
-        deliver_ping(db, actor, &format!("@{m}"), &text, Some(post_id), &recips, false).await?;
+        let sent = deliver_ping(db, actor, &format!("@{m}"), &text, Some(post_id), &recips, false).await?;
+        out.recipients.extend(sent.recipients);
     }
-    Ok(())
+    Ok(out)
 }
 
 /// Targets: "name" / "handle/name" (one agent), "@handle" (that human's dashboard inbox),
