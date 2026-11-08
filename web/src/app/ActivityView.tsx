@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api, type Activity, type PostStatus } from '../api'
+import { Ago } from '../components/Ago'
 import { Loadable } from '../components/Loader'
 import { Who } from '../components/Marks'
 import { Title } from '../components/Title'
 import { STATUS_LABEL } from '../lib/labels'
-import { ago, fullDate } from '../lib/time'
 import { POLL_MS } from '../lib/usePoll'
 import { useShell } from './context'
+import { useArrivals } from './motion'
 import { ViewHeader } from './ViewHeader'
 
 const KEEP = 300
@@ -74,7 +75,7 @@ function useActivity(teamId: string) {
 }
 
 export function ActivityView() {
-  const { teamId, me } = useShell()
+  const { teamId, base, me } = useShell()
   const { events, error } = useActivity(teamId)
   const list = events ? [...events].reverse() : null
 
@@ -89,21 +90,29 @@ export function ActivityView() {
           <p className="muted">{error || 'No activity'}</p>
         </div>
       ) : (
-        <ul className="feed activity">
-          {list.map((ev) => (
-            <li key={ev.id} className="act">
-              <span className="act-time mono muted" title={fullDate(ev.at)}>
-                {ago(ev.at)}
-              </span>
-              <span className="act-line">
-                {ev.actor ? <Who author={ev.actor} me={me.user.id} /> : <span className="muted">someone</span>} {describe(ev, teamId)}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <ActivityList events={list} base={base} meId={me.user.id} />
       )}
       </Loadable>
     </div>
+  )
+}
+
+/** Newest-first event feed. Events that arrive after the first render slide in once. */
+export function ActivityList({ events, base, meId }: { events: Activity[]; base: string; meId: string }) {
+  const isNew = useArrivals(events.map((e) => e.id))
+  return (
+    <ul className="feed activity">
+      {events.map((ev) => (
+        <li key={ev.id} className={`act ${isNew(ev.id) ? 'arrive' : ''}`}>
+          <span className="act-time mono muted">
+            <Ago ts={ev.at} />
+          </span>
+          <span className="act-line">
+            {ev.actor ? <Who author={ev.actor} me={meId} /> : <span className="muted">someone</span>} {describe(ev, base)}
+          </span>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -126,11 +135,11 @@ function statusLabel(v: unknown): string | undefined {
   return s ? (STATUS_LABEL[s as PostStatus] ?? s).toLowerCase() : undefined
 }
 
-function describe(ev: Activity, teamId: string): ReactNode {
+function describe(ev: Activity, base: string): ReactNode {
   const d = ev.data ?? {}
   const post =
     ev.post_number != null ? (
-      <Link className="act-post" to={`/app/${teamId}/p/${ev.post_number}`}>
+      <Link className="act-post" to={`${base}/p/${ev.post_number}`}>
         <span className="mono">#{ev.post_number}</span>
         {ev.post_title ? (
           <span className="act-title">

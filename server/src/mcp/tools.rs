@@ -776,11 +776,14 @@ async fn hello_text(ctx: &ToolCtx<'_>, out: &HelloOutcome, linked: bool) -> crat
     let db = &ctx.state.db;
     let now = now_ms();
     let team_id = ctx.auth.team_id.as_str();
-    let team = collab::team_name(db, team_id).await?;
+    let org = match crate::domain::accounts::get_team(db, team_id).await? {
+        Some(t) => format!("org \"{}\" ({})", t.name, t.slug),
+        None => "your org".to_string(),
+    };
     let me = &out.agent;
     let loc = format::repo_label(me.repo.as_deref(), me.branch.as_deref());
     let mut lines = vec![format!(
-        "You are {} ({}'s agent) on \"{team}\"{}.",
+        "You are {} ({}'s agent) on {org}{}.",
         me.display,
         me.handle,
         loc.as_ref().map(|l| format!(" · {l}")).unwrap_or_default()

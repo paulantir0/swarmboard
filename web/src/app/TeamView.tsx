@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { api, type Member } from '../api'
 import { Confirm, ConfirmButton } from '../components/Confirm'
 import { CopyButton } from '../components/CopyButton'
@@ -9,12 +9,15 @@ import { shortDate } from '../lib/time'
 import { usePoll } from '../lib/usePoll'
 import { useShell } from './context'
 import { JoinForm } from './JoinForm'
+import { slugify } from './NewOrg'
+import { HOST } from './Shell'
 import { ViewHeader } from './ViewHeader'
 
 const ROLE_LABEL = { owner: 'Owner', admin: 'Admin', member: '' } as const
 
 export function TeamView() {
-  const { teamId, me, team: summary, refreshMe } = useShell()
+  const { teamId, base, me, team: summary, refreshMe } = useShell()
+  const [slug, setSlug] = useState(summary.slug)
   const navigate = useNavigate()
   const detail = usePoll(() => api.team(teamId), [teamId])
   const [name, setName] = useState('')
@@ -63,6 +66,17 @@ export function TeamView() {
       await api.renameTeam(teamId, name.trim())
       await refreshMe()
     }, 'name')
+  }
+
+  const saveSlug = (e: FormEvent) => {
+    e.preventDefault()
+    const next = slugify(slug)
+    if (!next || next === team?.slug) return
+    void run(async () => {
+      const res = await api.setSlug(teamId, next)
+      await refreshMe()
+      navigate(`/${res.team.slug}/team`, { replace: true })
+    }, 'slug')
   }
 
   const saveHandle = (e: FormEvent) => {
@@ -115,7 +129,7 @@ export function TeamView() {
           ) : (
             <>
               <section className="block">
-                <h2 className="block-title">Name</h2>
+                <h2 className="block-title">Org name</h2>
                 {canManage ? (
                   <form className="inline-form" onSubmit={rename}>
                     <input className="field" aria-label="Team name" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
@@ -125,6 +139,36 @@ export function TeamView() {
                   </form>
                 ) : (
                   <p>{team.name}</p>
+                )}
+              </section>
+
+              <section className="block">
+                <h2 className="block-title">URL</h2>
+                {isOwner ? (
+                  <form className="inline-form" onSubmit={saveSlug}>
+                    <span className="slug-input">
+                      <span className="slug-host mono">{HOST}/</span>
+                      <input
+                        className="field mono"
+                        aria-label="URL slug"
+                        value={slug}
+                        maxLength={40}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))}
+                      />
+                    </span>
+                    <button className="btn btn-sm-h" type="submit" disabled={busy || !slugify(slug) || slugify(slug) === team.slug}>
+                      {saved === 'slug' ? 'Saved' : 'Save'}
+                    </button>
+                  </form>
+                ) : (
+                  <div className="inline-form">
+                    <code className="token-value">
+                      {HOST}/{team.slug}
+                    </code>
+                    <CopyButton text={`${window.location.origin}/${team.slug}`} className="btn-sm-h" />
+                  </div>
                 )}
               </section>
 
@@ -143,7 +187,9 @@ export function TeamView() {
                     const asking = pending?.uid === m.user_id ? pending.kind : null
                     return (
                       <li key={m.user_id} className={`member-row ${asking ? 'asking' : ''}`}>
-                        <span className="member-handle mono">{m.handle}</span>
+                        <Link className="member-handle mono" to={`${base}/members/${m.user_id}`}>
+                          {m.handle}
+                        </Link>
                         <span className="member-email muted">{m.email}</span>
                         <span className="member-role">
                           {ROLE_LABEL[m.role] ? <span className={`role-badge ${m.role}`}>{ROLE_LABEL[m.role]}</span> : null}
@@ -233,7 +279,7 @@ export function TeamView() {
               </section>
 
               <section className="block">
-                <h2 className="block-title">Join a board</h2>
+                <h2 className="block-title">Join an org</h2>
                 <JoinForm refreshMe={refreshMe} />
               </section>
 
@@ -241,7 +287,7 @@ export function TeamView() {
                 <section className="block">
                   <ConfirmButton className="btn btn-danger" disabled={busy} question={`Leave ${team.name}?`} confirmLabel="Leave" danger onConfirm={leave}>
                     <Icon name="logOut" size={14} />
-                    Leave board
+                    Leave org
                   </ConfirmButton>
                 </section>
               ) : null}

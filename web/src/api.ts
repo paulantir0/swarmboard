@@ -24,9 +24,11 @@ export interface User {
 
 export type Role = 'owner' | 'admin' | 'member'
 
+/** An org (the API still calls it a team). Lives at swarmboard.app/<slug>. */
 export interface TeamSummary {
   id: string
   name: string
+  slug: string
   role: Role
   member_count: number
   max_members: number
@@ -41,11 +43,22 @@ export interface VerifyResult {
   user: User
   teams: TeamSummary[]
   joined_team_id: string | null
+  joined_team_slug?: string | null
+  join_error?: string | null
+  /** No orgs yet: send them to /new. */
+  needs_org?: boolean
+}
+
+export interface SlugCheck {
+  slug: string
+  available: boolean
+  reason?: string
 }
 
 export interface Team {
   id: string
   name: string
+  slug: string
   owner_id: string
   created_at: number
 }
@@ -72,6 +85,7 @@ export interface TeamDetail {
 
 export interface InvitePreview {
   team_name: string
+  team_slug?: string
   inviter_handle: string
   member_count: number
   max_members: number
@@ -168,7 +182,10 @@ export interface PostFilter {
   status?: string
   kind?: string
   claimed_by?: string
+  /** Agent display ("paul/docs-agent"), "paul/*", or a handle. */
   author?: string
+  /** All posts by that human or any of their agents. */
+  author_user?: string
   q?: string
   limit?: number
   before?: number
@@ -202,6 +219,36 @@ export interface Agent {
   last_seen_at: number
   active: boolean
   claimed: number[]
+  /** Normalized repo ("github.com/acme/app") and branch it said it works in. */
+  repo?: string | null
+  branch?: string | null
+  /** Scopes it holds leases on. */
+  leases?: string[]
+}
+
+export interface AgentStats {
+  posts: number
+  replies: number
+  messages_sent: number
+  messages_received: number
+  sessions: number
+}
+
+export interface AgentProfile {
+  agent: Agent
+  leases: Lease[]
+  queue: LeaseWait[]
+  stats: AgentStats
+  /** Last 50 events, newest first. */
+  recent: Activity[]
+}
+
+export interface MemberProfile {
+  member: Member
+  /** Their agents here, active first. */
+  agents: Agent[]
+  /** Last 50 events by them or their agents, newest first. */
+  recent: Activity[]
 }
 
 export interface FileInfo {
@@ -406,12 +453,18 @@ export const api = {
   // teams
   team: (tid: string) => request<TeamDetail>('GET', t(tid)),
   renameTeam: (tid: string, name: string) => request<{ team: Team }>('PATCH', t(tid), { name }),
+  setSlug: (tid: string, slug: string) => request<{ team: Team }>('PATCH', t(tid), { slug }),
   rotateInvite: (tid: string) => request<Invite>('POST', `${t(tid)}/invite`),
   removeMember: (tid: string, uid: string) => request<{ ok: true }>('DELETE', `${t(tid)}/members/${enc(uid)}`),
   setRole: (tid: string, uid: string, role: 'admin' | 'member') => request<Member>('PATCH', `${t(tid)}/members/${enc(uid)}`, { role }),
   transferOwnership: (tid: string, uid: string) => request<{ ok: true }>('POST', `${t(tid)}/transfer`, { user_id: uid }),
   invite: (code: string) => request<InvitePreview>('GET', `/api/invites/${enc(code)}`),
-  acceptInvite: (code: string) => request<{ team_id: string }>('POST', `/api/invites/${enc(code)}/accept`),
+  acceptInvite: (code: string) => request<{ team_id: string; slug?: string }>('POST', `/api/invites/${enc(code)}/accept`),
+
+  // orgs
+  org: (slug: string) => request<TeamSummary>('GET', `/api/orgs/${enc(slug)}`),
+  checkSlug: (slug: string, init?: RequestInit) => request<SlugCheck>('GET', `/api/orgs/slug${qs({ slug })}`, undefined, init),
+  createOrg: (name: string, slug?: string) => request<TeamSummary>('POST', '/api/orgs', { name, slug: slug || undefined }),
 
   // tokens
   tokens: (tid: string) => request<ApiToken[]>('GET', `${t(tid)}/tokens`),
@@ -435,6 +488,8 @@ export const api = {
 
   // agents, pings, inbox
   agents: (tid: string, activeOnly = false) => request<Agent[]>('GET', `${t(tid)}/agents${qs({ active: activeOnly })}`),
+  agent: (tid: string, agentId: string) => request<AgentProfile>('GET', `${t(tid)}/agents/${enc(agentId)}`),
+  member: (tid: string, userId: string) => request<MemberProfile>('GET', `${t(tid)}/members/${enc(userId)}`),
   ping: (tid: string, to: string, body: string, post_number?: number) =>
     request<PingSent>('POST', `${t(tid)}/pings`, { to, body, post_number }),
   inbox: (tid: string, all = false) => request<Ping[]>('GET', `${t(tid)}/inbox${qs({ all })}`),

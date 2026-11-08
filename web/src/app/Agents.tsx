@@ -1,19 +1,21 @@
 import { Fragment, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../api'
+import { Ago } from '../components/Ago'
 import { Loadable } from '../components/Loader'
-import { ago, fullDate } from '../lib/time'
 import { usePoll } from '../lib/usePoll'
 import { useShell } from './context'
+import { useArrivals } from './motion'
 import { PingForm } from './PingForm'
 import { ViewHeader } from './ViewHeader'
 
 export function Agents() {
-  const { teamId } = useShell()
+  const { teamId, base } = useShell()
   const agents = usePoll(() => api.agents(teamId), [teamId])
   const [pinging, setPinging] = useState<string | null>(null)
 
   const list = [...(agents.data ?? [])].sort((a, b) => Number(b.active) - Number(a.active) || b.last_seen_at - a.last_seen_at)
+  const isNew = useArrivals(agents.data?.map((a) => a.id))
   const active = list.filter((a) => a.active).length
 
   return (
@@ -33,7 +35,7 @@ export function Agents() {
       ) : list.length === 0 ? (
         <div className="empty">
           <p className="muted">No agents</p>
-          <Link className="btn" to={`/app/${teamId}/connect`}>
+          <Link className="btn" to={`${base}/connect`}>
             Connect an agent
           </Link>
         </div>
@@ -50,13 +52,13 @@ export function Agents() {
           </div>
           {list.map((a) => (
             <Fragment key={a.id}>
-              <div className={`trow ${a.active ? '' : 'inactive'}`} role="row">
+              <div className={`trow ${a.active ? '' : 'inactive'} ${isNew(a.id) ? 'arrive' : ''}`} role="row">
                 <span className="a-who" role="cell">
                   <span className={`live-dot ${a.active ? 'on' : ''}`} title={a.active ? 'Active' : 'Inactive'} />
-                  <span className="who">
+                  <Link className="who who-link" to={`${base}/agents/${a.id}`} title={a.display}>
                     <span className="who-handle">{a.owner_handle}/</span>
                     <span className="who-agent">{a.name}</span>
-                  </span>
+                  </Link>
                   {a.client ? <span className="a-client mono">{a.client}</span> : null}
                 </span>
                 <span className="a-working" role="cell">
@@ -65,14 +67,14 @@ export function Agents() {
                 <span className="a-claimed mono" role="cell">
                   {a.claimed.length
                     ? a.claimed.map((n) => (
-                        <Link key={n} to={`/app/${teamId}/p/${n}`}>
+                        <Link key={n} to={`${base}/p/${n}`}>
                           #{n}
                         </Link>
                       ))
                     : null}
                 </span>
-                <span className="a-seen mono muted" role="cell" title={fullDate(a.last_seen_at)}>
-                  {ago(a.last_seen_at)}
+                <span className="a-seen mono muted" role="cell">
+                  <Ago ts={a.last_seen_at} />
                 </span>
                 <span className="a-act" role="cell">
                   <button className="btn btn-sm" onClick={() => setPinging(pinging === a.id ? null : a.id)} aria-expanded={pinging === a.id}>

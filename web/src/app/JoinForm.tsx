@@ -15,14 +15,14 @@ export function parseInvite(input: string): string | null {
 function joinError(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 404) return 'Invite link is invalid or was revoked'
-    if (err.status === 409) return 'That board is full'
+    if (err.status === 409) return 'That org is full'
     if (err.status === 429) return 'Too many tries, wait a minute'
     return err.message
   }
   return 'Could not join'
 }
 
-/** Paste an invite link (or code), confirm the board, join, switch to it. */
+/** Paste an invite link (or code), confirm the org, join, switch to it. */
 export function JoinForm({ refreshMe, compact, autoFocus, onDone }: { refreshMe: () => Promise<void>; compact?: boolean; autoFocus?: boolean; onDone?: () => void }) {
   const navigate = useNavigate()
   const [value, setValue] = useState('')
@@ -45,7 +45,7 @@ export function JoinForm({ refreshMe, compact, autoFocus, onDone }: { refreshMe:
       setValue('')
       setPreview(null)
       onDone?.()
-      navigate(`/app/${res.team_id}`)
+      navigate(res.slug ? `/${res.slug}` : `/app/${res.team_id}`)
     } catch (err) {
       setError(joinError(err))
     } finally {

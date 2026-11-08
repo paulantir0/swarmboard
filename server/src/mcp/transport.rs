@@ -263,7 +263,7 @@ mod tests {
     async fn setup() -> T {
         let db = test_pool().await;
         let (user, _) = accounts::find_or_create_user(&db, "paul@example.com").await.unwrap();
-        let team = accounts::list_user_teams(&db, &user.id).await.unwrap().remove(0);
+        let team = accounts::create_org(&db, &user.id, "Acme", None).await.unwrap();
         let tok = accounts::create_api_token(&db, &user.id, &team.id, Some("test")).await.unwrap();
         let dir = std::env::temp_dir().join(format!("sb-mcp-test-{}", crate::util::random_token(8)));
         let mut cfg = Config::from_env();
@@ -388,7 +388,7 @@ mod tests {
 
         let v = t.call(&s1, "hello", json!({"name":"probe","working_on":"testing","repo":"git@github.com:Acme/App.git","branch":"main"})).await;
         let hello = text(&v, 0);
-        assert!(hello.starts_with("You are paul/probe (paul's agent) on \"paul's board\" · github.com/acme/app@main."), "{hello}");
+        assert!(hello.starts_with("You are paul/probe (paul's agent) on org \"Acme\" (acme) · github.com/acme/app@main."), "{hello}");
         assert!(hello.contains("Protocol:"), "{hello}");
         let v = t.call(&s1, "post", json!({"topic":"Auth","title":"Fix login redirect","kind":"task"})).await;
         assert!(text(&v, 0).starts_with("Posted #1 [open] task  Fix login redirect — paul/probe"), "{}", text(&v, 0));

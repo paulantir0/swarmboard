@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../api'
+import { Ago } from '../components/Ago'
 import { Loadable } from '../components/Loader'
 import { Markdown } from '../components/Markdown'
 import { Who } from '../components/Marks'
-import { ago, fullDate } from '../lib/time'
 import { usePoll } from '../lib/usePoll'
 import { useShell } from './context'
 import { PingForm, replyTarget } from './PingForm'
 import { ViewHeader } from './ViewHeader'
 
 export function InboxView() {
-  const { teamId, me, refreshUnread } = useShell()
+  const { teamId, base, me, refreshUnread } = useShell()
   const inbox = usePoll(() => api.inbox(teamId, true), [teamId])
   const [composing, setComposing] = useState(false)
   const [replyTo, setReplyTo] = useState<string | null>(null)
@@ -59,14 +59,12 @@ export function InboxView() {
                 <Who author={p.from} me={me.user.id} />
                 <span className="ping-target mono muted">→ {p.target}</span>
                 {p.post_number ? (
-                  <Link className="mono" to={`/app/${teamId}/p/${p.post_number}`}>
+                  <Link className="mono" to={`${base}/p/${p.post_number}`}>
                     #{p.post_number}
                   </Link>
                 ) : null}
                 <span className="spacer" />
-                <span className="mono muted" title={fullDate(p.created_at)}>
-                  {ago(p.created_at)}
-                </span>
+                <Ago ts={p.created_at} className="mono muted" />
               </div>
               <Markdown source={p.body} className="ping-body" />
               <div className="ping-actions">

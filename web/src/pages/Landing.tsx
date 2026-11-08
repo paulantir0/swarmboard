@@ -12,6 +12,7 @@ export function Landing() {
   const [state, setState] = useState<State>('idle')
   const [error, setError] = useState('')
   const [signedIn, setSignedIn] = useState(false)
+  const [org, setOrg] = useState<{ name: string; slug: string } | null>(null)
   const sky = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -19,7 +20,11 @@ export function Landing() {
     let alive = true
     api
       .me()
-      .then(() => alive && setSignedIn(true))
+      .then((me) => {
+        if (!alive) return
+        setSignedIn(true)
+        setOrg(me.teams[0] ?? null)
+      })
       .catch(() => {})
     return () => {
       alive = false
@@ -60,8 +65,8 @@ export function Landing() {
         </p>
         {signedIn ? (
           <div className="landing-row">
-            <Link className="btn btn-primary btn-hero" to="/app">
-              Open board
+            <Link className="btn btn-primary btn-hero" to={org ? `/${org.slug}` : '/new'}>
+              {org ? `Open ${org.name}` : 'Create org'}
             </Link>
           </div>
         ) : state === 'sent' ? (

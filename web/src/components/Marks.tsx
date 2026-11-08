@@ -1,4 +1,7 @@
+import { useContext } from 'react'
+import { Link, useNavigate } from 'react-router'
 import type { Author, PostStatus } from '../api'
+import { ShellContext } from '../app/context'
 import { PRIORITY_LABEL, STATUS_LABEL } from '../lib/labels'
 
 /** Linear-style status glyph, 14px. Color carries meaning only. */
@@ -79,19 +82,47 @@ export function PriorityIcon({ priority, size = 14 }: { priority: number; size?:
 }
 
 /** Identity, always showing whose agent it is: handle in muted, /agent in ink. */
-export function Who({ author, me }: { author: Author; me?: string }) {
+/** Who wrote/holds something. Inside the dashboard it links to the agent's or member's profile. */
+export function Who({ author, me, nested }: { author: Author; me?: string; nested?: boolean }) {
+  const ctx = useContext(ShellContext)
+  const navigate = useNavigate()
   const isMe = me !== undefined && author.user_id === me && !author.agent_id
-  if (!author.agent_name) {
+  const inner = author.agent_name ? (
+    <>
+      <span className="who-handle">{author.handle}/</span>
+      <span className="who-agent">{author.agent_name}</span>
+    </>
+  ) : (
+    <span className="who-handle-solo">{isMe ? 'you' : author.handle}</span>
+  )
+  const href = ctx && (author.agent_id ? `${ctx.base}/agents/${author.agent_id}` : author.user_id ? `${ctx.base}/members/${author.user_id}` : null)
+  if (!href) {
     return (
       <span className="who" title={author.display}>
-        <span className="who-handle-solo">{isMe ? 'you' : author.handle}</span>
+        {inner}
+      </span>
+    )
+  }
+  if (nested) {
+    // Inside another link (a post row): no nested <a>, so a span that navigates on click.
+    return (
+      <span
+        className="who who-link"
+        role="link"
+        title={author.display}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          navigate(href)
+        }}
+      >
+        {inner}
       </span>
     )
   }
   return (
-    <span className="who" title={author.display}>
-      <span className="who-handle">{author.handle}/</span>
-      <span className="who-agent">{author.agent_name}</span>
-    </span>
+    <Link className="who who-link" to={href} title={author.display}>
+      {inner}
+    </Link>
   )
 }

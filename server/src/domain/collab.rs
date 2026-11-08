@@ -13,8 +13,8 @@ use crate::{
     auth::RateLimiter,
     error::{AppError, AppResult},
     models::{
-        Activity, Actor, Agent, Author, Board, Comment, FileInfo, NewPost, Ping, PingSent, Post, PostDetail, PostFilter,
-        PostPatch, AGENT_ACTIVE_MS, POST_KINDS, POST_STATUSES,
+        Activity, Actor, Agent, AgentProfile, AgentStats, Author, Board, Comment, FileInfo, Lease, LeaseWait, MemberProfile,
+        NewPost, Ping, PingSent, Post, PostDetail, PostFilter, PostPatch, AGENT_ACTIVE_MS, POST_KINDS, POST_STATUSES,
     },
     state::AppState,
     util::{new_id, now_ms, random_token},
@@ -232,12 +232,6 @@ pub async fn actor_display(db: &SqlitePool, actor: &Actor) -> AppResult<String> 
         Some((h, None)) => h,
         None => "someone".to_string(),
     })
-}
-
-pub async fn team_name(db: &SqlitePool, team_id: &str) -> AppResult<String> {
-    let name: Option<String> =
-        sqlx::query_scalar("SELECT name FROM teams WHERE id = ?1").bind(team_id).fetch_optional(db).await?;
-    Ok(name.unwrap_or_else(|| "your team".to_string()))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -475,7 +469,12 @@ pub async fn list_posts(db: &SqlitePool, team_id: &str, filter: &PostFilter) -> 
         None => None,
     };
     let (c_mode, c_handle, c_name) = who_filter(filter.claimed_by.as_deref());
-    let (a_mode, a_handle, a_name) = who_filter(filter.author.as_deref());
+    let (mut a_mode, a_handle, a_name) = who_filter(filter.author.as_deref());
+    if a_mode == Some("either") {
+        // Bare author word: that human's own posts; an agent name only if no member has that handle.
+        a_mode = Some("bare");
+    }
+    let author_user = filter.author_user.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let q = filter.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let limit = filter.limit.unwrap_or(50).clamp(1, 200);
     let rows: Vec<PostRow> = sqlx::query_as(concat!(
@@ -497,7 +496,11 @@ pub async fn list_posts(db: &SqlitePool, team_id: &str, filter: &PostFilter) -> 
                 OR (?8 = 'display' AND au.handle = ?9 AND aa.name = ?10)
                 OR (?8 = 'handle' AND au.handle = ?9)
                 OR (?8 = 'human' AND au.handle = ?9 AND p.author_agent_id IS NULL)
-                OR (?8 = 'either' AND (au.handle = ?9 OR aa.name = ?10)))
+                OR (?8 = 'either' AND (au.handle = ?9 OR aa.name = ?10))
+                OR (?8 = 'bare' AND ((au.handle = ?9 AND p.author_agent_id IS NULL)
+                     OR (aa.name = ?10 AND NOT EXISTS (SELECT 1 FROM memberships m JOIN users mu ON mu.id = m.user_id
+                                                       WHERE m.team_id = ?1 AND mu.handle = ?9)))))
+           AND (?14 IS NULL OR p.author_user_id = ?14)
            AND (?11 IS NULL OR instr(lower(p.title), lower(?11)) > 0 OR instr(lower(p.body), lower(?11)) > 0)
            AND (?12 IS NULL OR p.number < ?12)
          ORDER BY p.number DESC
@@ -516,6 +519,7 @@ pub async fn list_posts(db: &SqlitePool, team_id: &str, filter: &PostFilter) -> 
     .bind(q)
     .bind(filter.before)
     .bind(limit)
+    .bind(author_user)
     .fetch_all(db)
     .await?;
     Ok(rows.into_iter().map(|r| r.into_post(Some(240))).collect())
@@ -1362,6 +1366,17 @@ struct AgentListRow {
 /// Agents in the team, most recently seen first. Active = seen within AGENT_ACTIVE_MS and still
 /// holding an open MCP session (a client that sent DELETE /mcp is gone right away).
 pub async fn list_agents(db: &SqlitePool, team_id: &str, active_only: bool) -> AppResult<Vec<Agent>> {
+    query_agents(db, team_id, active_only, None, None).await
+}
+
+/// `list_agents`, optionally narrowed to one agent id and/or one owner.
+async fn query_agents(
+    db: &SqlitePool,
+    team_id: &str,
+    active_only: bool,
+    agent_id: Option<&str>,
+    user_id: Option<&str>,
+) -> AppResult<Vec<Agent>> {
     let now = now_ms();
     let since = now - AGENT_ACTIVE_MS;
     let rows: Vec<AgentListRow> = sqlx::query_as(
@@ -1376,6 +1391,8 @@ pub async fn list_agents(db: &SqlitePool, team_id: &str, active_only: bool) -> A
          JOIN users u ON u.id = a.user_id
          JOIN memberships m ON m.team_id = a.team_id AND m.user_id = a.user_id
          WHERE a.team_id = ?1 AND (?2 = 0 OR (a.last_seen_at > ?3 AND EXISTS (SELECT 1 FROM mcp_sessions s WHERE s.agent_id = a.id AND s.closed_at IS NULL)))
+           AND (?5 IS NULL OR a.id = ?5)
+           AND (?6 IS NULL OR a.user_id = ?6)
          ORDER BY a.last_seen_at DESC
          LIMIT 200",
     )
@@ -1383,6 +1400,8 @@ pub async fn list_agents(db: &SqlitePool, team_id: &str, active_only: bool) -> A
     .bind(active_only)
     .bind(since)
     .bind(now)
+    .bind(agent_id)
+    .bind(user_id)
     .fetch_all(db)
     .await?;
     Ok(rows
@@ -2095,24 +2114,50 @@ macro_rules! event_select {
 
 /// Events with id > `after`, oldest first, max `limit` (default 100).
 /// Without `after`, returns the most recent `limit` events (still oldest first).
+#[cfg(test)]
 pub async fn activity(db: &SqlitePool, team_id: &str, after: Option<i64>, limit: Option<i64>) -> AppResult<Vec<Activity>> {
-    let limit = limit.unwrap_or(100).clamp(1, 500);
-    let mut rows: Vec<EventRow> = match after {
-        Some(after) => {
-            sqlx::query_as(concat!(event_select!(), "WHERE e.team_id = ?1 AND e.id > ?2 ORDER BY e.id ASC LIMIT ?3"))
-                .bind(team_id)
-                .bind(after)
-                .bind(limit)
-                .fetch_all(db)
-                .await?
-        }
-        None => sqlx::query_as(concat!(event_select!(), "WHERE e.team_id = ?1 ORDER BY e.id DESC LIMIT ?2"))
-            .bind(team_id)
-            .bind(limit)
-            .fetch_all(db)
-            .await?,
+    activity_filtered(db, team_id, &ActivityFilter { after, limit, ..Default::default() }).await
+}
+
+/// Optional narrowing for the activity feed.
+#[derive(Debug, Clone, Default)]
+pub struct ActivityFilter {
+    pub after: Option<i64>,
+    pub limit: Option<i64>,
+    /// Only events performed by this agent.
+    pub agent_id: Option<String>,
+    /// Only events by this human or any of their agents.
+    pub user_id: Option<String>,
+}
+
+/// `activity` with optional agent/user filters (same ordering rules).
+pub async fn activity_filtered(db: &SqlitePool, team_id: &str, f: &ActivityFilter) -> AppResult<Vec<Activity>> {
+    let limit = f.limit.unwrap_or(100).clamp(1, 500);
+    // Two statements so each ORDER BY can walk the events_team index.
+    let sql = if f.after.is_some() {
+        concat!(
+            event_select!(),
+            "WHERE e.team_id = ?1 AND e.id > ?2
+               AND (?3 IS NULL OR e.actor_agent_id = ?3) AND (?4 IS NULL OR e.actor_user_id = ?4)
+             ORDER BY e.id ASC LIMIT ?5"
+        )
+    } else {
+        concat!(
+            event_select!(),
+            "WHERE e.team_id = ?1 AND ?2 IS NULL
+               AND (?3 IS NULL OR e.actor_agent_id = ?3) AND (?4 IS NULL OR e.actor_user_id = ?4)
+             ORDER BY e.id DESC LIMIT ?5"
+        )
     };
-    if after.is_none() {
+    let mut rows: Vec<EventRow> = sqlx::query_as(sql)
+        .bind(team_id)
+        .bind(f.after)
+        .bind(f.agent_id.as_deref())
+        .bind(f.user_id.as_deref())
+        .bind(limit)
+        .fetch_all(db)
+        .await?;
+    if f.after.is_none() {
         rows.reverse();
     }
     Ok(rows
@@ -2130,6 +2175,62 @@ pub async fn activity(db: &SqlitePool, team_id: &str, after: Option<i64>, limit:
             data: serde_json::from_str(&r.data).unwrap_or_else(|_| json!({})),
         })
         .collect())
+}
+
+/// Most recent `n` events matching `f`, newest first (profile pages).
+async fn recent_activity(db: &SqlitePool, team_id: &str, agent_id: Option<&str>, user_id: Option<&str>, n: i64) -> AppResult<Vec<Activity>> {
+    let f = ActivityFilter { after: None, limit: Some(n), agent_id: agent_id.map(Into::into), user_id: user_id.map(Into::into) };
+    let mut v = activity_filtered(db, team_id, &f).await?;
+    v.reverse();
+    Ok(v)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Profiles
+// ---------------------------------------------------------------------------------------------
+
+const PROFILE_RECENT: i64 = 50;
+
+/// One agent's page: identity, live leases, queue positions, counters, recent events.
+/// None if the agent isn't in this team (or its owner left it).
+pub async fn agent_profile(db: &SqlitePool, team_id: &str, agent_id: &str) -> AppResult<Option<AgentProfile>> {
+    let Some(agent) = query_agents(db, team_id, false, Some(agent_id), None).await?.into_iter().next() else {
+        return Ok(None);
+    };
+    let claims = leases::list(db, team_id).await?;
+    let leases: Vec<Lease> = claims.leases.into_iter().filter(|l| l.holder.agent_id.as_deref() == Some(agent_id)).collect();
+    let queue: Vec<LeaseWait> = claims.queue.into_iter().filter(|w| w.waiter.agent_id.as_deref() == Some(agent_id)).collect();
+    let (posts, replies, messages_sent, messages_received, sessions): (i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM posts WHERE team_id = ?1 AND author_agent_id = ?2),
+                (SELECT COUNT(*) FROM comments WHERE team_id = ?1 AND author_agent_id = ?2),
+                (SELECT COUNT(*) FROM pings WHERE team_id = ?1 AND from_agent_id = ?2),
+                (SELECT COUNT(*) FROM inbox WHERE team_id = ?1 AND agent_id = ?2),
+                (SELECT COUNT(*) FROM mcp_sessions WHERE team_id = ?1 AND agent_id = ?2)",
+    )
+    .bind(team_id)
+    .bind(agent_id)
+    .fetch_one(db)
+    .await?;
+    let recent = recent_activity(db, team_id, Some(agent_id), None, PROFILE_RECENT).await?;
+    Ok(Some(AgentProfile {
+        agent,
+        leases,
+        queue,
+        stats: AgentStats { posts, replies, messages_sent, messages_received, sessions },
+        recent,
+    }))
+}
+
+/// One human's page: membership, their agents in this team (active first), recent events by
+/// them or their agents. None if they aren't a member.
+pub async fn member_profile(db: &SqlitePool, team_id: &str, user_id: &str) -> AppResult<Option<MemberProfile>> {
+    let Some(member) = crate::domain::accounts::get_member(db, team_id, user_id).await? else {
+        return Ok(None);
+    };
+    let mut agents = query_agents(db, team_id, false, None, Some(user_id)).await?;
+    agents.sort_by_key(|a| !a.active); // stable: keeps last-seen order within each group
+    let recent = recent_activity(db, team_id, None, Some(user_id), PROFILE_RECENT).await?;
+    Ok(Some(MemberProfile { member, agents, recent }))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2177,7 +2278,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         let team = new_id("tm");
-        sqlx::query("INSERT INTO teams (id, name, owner_id, created_at) VALUES (?1, 'paul''s board', ?2, 0)")
+        sqlx::query("INSERT INTO teams (id, name, slug, owner_id, created_at) VALUES (?1, 'paul''s board', 'paul', ?2, 0)")
             .bind(team.as_str())
             .bind(owner.as_str())
             .execute(&db)
@@ -2239,7 +2340,7 @@ pub(crate) mod tests {
 
         // Second team has its own sequence.
         let t2 = new_id("tm");
-        sqlx::query("INSERT INTO teams (id, name, owner_id, created_at) VALUES (?1, 't2', ?2, 0)")
+        sqlx::query("INSERT INTO teams (id, name, slug, owner_id, created_at) VALUES (?1, 't2', 't2', ?2, 0)")
             .bind(t2.as_str())
             .bind(f.paul.as_str())
             .execute(&f.db)
@@ -2600,7 +2701,7 @@ pub(crate) mod tests {
 
     async fn add_team(db: &SqlitePool, owner: &str) -> String {
         let team = new_id("tm");
-        sqlx::query("INSERT INTO teams (id, name, owner_id, created_at) VALUES (?1, 'other', ?2, 0)")
+        sqlx::query("INSERT INTO teams (id, name, slug, owner_id, created_at) VALUES (?1, 'other', lower(substr(?1, 4)), ?2, 0)")
             .bind(team.as_str())
             .bind(owner)
             .execute(db)

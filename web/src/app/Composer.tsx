@@ -8,7 +8,7 @@ import { useShell } from './context'
 import { ViewHeader } from './ViewHeader'
 
 export function Composer() {
-  const { teamId, boards, refreshBoards } = useShell()
+  const { teamId, base, boards, refreshBoards } = useShell()
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const initialBoard = params.get('board') ?? ''
@@ -40,7 +40,7 @@ export function Composer() {
         }
       }
       void refreshBoards()
-      navigate(`/app/${teamId}/p/${post.number}`, { replace: true })
+      navigate(`${base}/p/${post.number}`, { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create post')
       setBusy(false)
@@ -48,7 +48,7 @@ export function Composer() {
   }
 
   const back = (
-    <Link className="btn btn-ghost btn-icon" to={`/app/${teamId}${initialBoard ? `?board=${encodeURIComponent(initialBoard)}` : ''}`} aria-label="Back">
+    <Link className="btn btn-ghost btn-icon" to={`${base}${initialBoard ? `?board=${encodeURIComponent(initialBoard)}` : ''}`} aria-label="Back">
       <Icon name="arrowLeft" />
     </Link>
   )
@@ -113,7 +113,7 @@ export function Composer() {
                   Claim
                 </label>
               ) : null}
-              <Link className="btn" to={`/app/${teamId}`}>
+              <Link className="btn" to={base}>
                 Cancel
               </Link>
               <button className="btn btn-primary" type="submit" disabled={busy || uploading || !title.trim() || !boardKey}>

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
-import { api, ApiError, UNAUTHORIZED_EVENT, type Me } from '../api'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Link, Navigate, Outlet, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
+import { api, ApiError, UNAUTHORIZED_EVENT, type Me, type TeamSummary } from '../api'
 import { Wordmark } from '../components/Brand'
 import { WindowDrop } from '../components/DropZone'
 import { Icon, type IconName } from '../components/Icon'
@@ -10,9 +10,20 @@ import { usePoll } from '../lib/usePoll'
 import { PROMPT_KEY } from './Connect'
 import { ShellContext, type ShellCtx } from './context'
 import { JoinForm } from './JoinForm'
+import { Count, RouteView, TNavLink, reducedMotion, useArrivals } from './motion'
 import '../styles/app.css'
 
 const LAST_TEAM = 'sb:last-team'
+
+/** Top-level paths an org slug can never take (mirrors the server's RESERVED_SLUGS). */
+export const RESERVED_SLUGS = new Set(
+  'app api auth join new orgs org f u p mcp healthz assets brand fonts crew login logout signup settings admin www docs help about terms privacy static invite connect github slug'.split(
+    ' ',
+  ),
+)
+
+/** "swarmboard.app" in production, "localhost:5191" locally. */
+export const HOST = typeof window !== 'undefined' ? window.location.host : 'swarmboard.app'
 
 function readLastTeam(): string | null {
   try {
@@ -42,16 +53,21 @@ function forgetPrompts() {
   }
 }
 
-/** /app → the last team you looked at, else your first team. */
+/** The org you looked at last, else your first. */
+export function pickOrg(teams: TeamSummary[]): TeamSummary | undefined {
+  const last = readLastTeam()
+  return teams.find((t) => t.id === last) ?? teams[0]
+}
+
+/** /app → your last org, else the first, else /new. */
 export function TeamRedirect() {
   const [target, setTarget] = useState<string | null>(null)
   useEffect(() => {
     api
       .me()
       .then((me) => {
-        const last = readLastTeam()
-        const team = me.teams.find((t) => t.id === last) ?? me.teams[0]
-        setTarget(team ? `/app/${team.id}` : '/')
+        const team = pickOrg(me.teams)
+        setTarget(team ? `/${team.slug}` : '/new')
       })
       .catch(() => setTarget('/'))
   }, [])
@@ -59,13 +75,35 @@ export function TeamRedirect() {
   return <Navigate to={target} replace />
 }
 
+/** Old links: /app/:teamId/... → /:slug/... */
+export function LegacyRedirect() {
+  const { teamId = '', '*': rest = '' } = useParams()
+  const location = useLocation()
+  const [target, setTarget] = useState<string | null>(null)
+  useEffect(() => {
+    api
+      .me()
+      .then((me) => {
+        const team = me.teams.find((t) => t.id === teamId)
+        if (!team) return setTarget('/app')
+        const path = rest === 'new' ? 'new-post' : rest
+        setTarget(`/${team.slug}${path ? `/${path}` : ''}${location.search}`)
+      })
+      .catch(() => setTarget('/'))
+  }, [teamId, rest, location.search])
+  if (!target) return <BootLoader />
+  return <Navigate to={target} replace />
+}
+
 export function Shell() {
-  const { teamId = '' } = useParams()
+  const { slug = '' } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
   const [me, setMe] = useState<Me | null>(null)
   const [meError, setMeError] = useState(false)
   const [navOpen, setNavOpen] = useState(false)
+  const [missing, setMissing] = useState<string | null>(null)
+  const checked = useRef(new Set<string>())
 
   const refreshMe = useCallback(async () => {
     try {
@@ -84,8 +122,36 @@ export function Shell() {
 
   useEffect(() => setNavOpen(false), [location.pathname, location.search])
 
-  const team = me?.teams.find((t) => t.id === teamId)
+  // Orgs, roles and member counts change elsewhere; refresh /api/me now and then while visible.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshMe()
+    }, 30_000)
+    return () => window.clearInterval(id)
+  }, [refreshMe])
+
+  const reserved = RESERVED_SLUGS.has(slug)
+  const team = me?.teams.find((t) => t.slug === slug)
+  const teamId = team?.id ?? ''
   const ready = Boolean(me && team)
+
+  // Not in /api/me: maybe joined or renamed elsewhere. Ask once per slug, else show "Not a member".
+  useEffect(() => {
+    if (!me || team || reserved) return
+    if (checked.current.has(slug)) {
+      setMissing(slug)
+      return
+    }
+    checked.current.add(slug)
+    let alive = true
+    api
+      .org(slug)
+      .then(() => refreshMe())
+      .catch(() => alive && setMissing(slug))
+    return () => {
+      alive = false
+    }
+  }, [me, team, slug, reserved, refreshMe])
 
   useEffect(() => {
     if (team) writeLastTeam(team.id)
@@ -95,6 +161,8 @@ export function Shell() {
   const unread = usePoll(() => api.inbox(teamId), [teamId], undefined, ready)
   const agents = usePoll(() => api.agents(teamId), [teamId], 10_000, ready)
 
+  const base = `/${slug}`
+
   // Keyboard: c = new post (when not typing).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -103,18 +171,20 @@ export function Shell() {
       if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return
       if (e.key === 'c') {
         e.preventDefault()
-        navigate(`/app/${teamId}/new`)
+        navigate(`${base}/new-post`)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [navigate, teamId])
+  }, [navigate, base])
 
   const ctx = useMemo<ShellCtx | null>(() => {
     if (!me || !team) return null
     return {
       me,
       teamId,
+      slug: team.slug,
+      base: `/${team.slug}`,
       team,
       boards: boards.data ?? [],
       agents: agents.data ?? [],
@@ -126,6 +196,7 @@ export function Shell() {
     }
   }, [me, team, teamId, boards.data, boards.reload, agents.data, unread.data, unread.reload, refreshMe])
 
+  if (reserved) return <Navigate to="/" replace />
   if (meError && !me) {
     return (
       <div className="app-loading">
@@ -137,7 +208,7 @@ export function Shell() {
     )
   }
   if (!me) return <BootLoader />
-  if (!team) return <Navigate to="/app" replace />
+  if (!team) return missing === slug ? <NotMember slug={slug} me={me} refreshMe={refreshMe} /> : <BootLoader />
 
   return (
     <ShellContext.Provider value={ctx}>
@@ -147,15 +218,109 @@ export function Shell() {
         <Sidebar ctx={ctx!} onClose={() => setNavOpen(false)} />
         <div className="nav-scrim" onClick={() => setNavOpen(false)} aria-hidden="true" />
         <main className="app-main">
-          <Outlet />
+          <RouteView key={location.pathname}>
+            <Outlet />
+          </RouteView>
         </main>
       </div>
     </ShellContext.Provider>
   )
 }
 
+/** /<slug> you can't see: paste an invite, or go to one of yours. */
+function NotMember({ slug, me, refreshMe }: { slug: string; me: Me; refreshMe: () => Promise<void> }) {
+  return (
+    <main className="solo">
+      <div className="solo-card">
+        <Link to="/" className="solo-brand" aria-label="swarmboard">
+          <Wordmark />
+        </Link>
+        <h1 className="solo-title">Not a member</h1>
+        <p className="solo-url mono">
+          {HOST}/{slug}
+        </p>
+        <div className="solo-section">
+          <span className="label">Invite link</span>
+          <JoinForm refreshMe={refreshMe} autoFocus />
+        </div>
+        <div className="solo-links">
+          {me.teams.map((t) => (
+            <Link key={t.id} className="solo-org" to={`/${t.slug}`}>
+              <span>{t.name}</span>
+              <span className="mono muted">/{t.slug}</span>
+            </Link>
+          ))}
+          <Link className="btn btn-ghost btn-sm" to="/new">
+            <Icon name="plus" size={14} />
+            Create org
+          </Link>
+        </div>
+      </div>
+    </main>
+  )
+}
+
+/** One sliding highlight for the active row and a softer one that follows the pointer. */
+function useGlide(ref: React.RefObject<HTMLElement | null>, deps: unknown[]) {
+  const [on, setOn] = useState(false)
+
+  useLayoutEffect(() => {
+    const root = ref.current
+    if (!root) return
+    const active = root.querySelector<HTMLElement>('.sb-glide-active')
+    const ghost = root.querySelector<HTMLElement>('.sb-glide-hover')
+    if (!active || !ghost) return
+
+    const place = (el: HTMLElement, target: HTMLElement | null, animate: boolean) => {
+      if (!target || target.offsetParent === null) {
+        el.style.opacity = '0'
+        return
+      }
+      const r = root.getBoundingClientRect()
+      const t = target.getBoundingClientRect()
+      const x = t.left - r.left + root.scrollLeft
+      const y = t.top - r.top + root.scrollTop
+      const wasHidden = el.style.opacity !== '1'
+      el.style.transition = animate && !wasHidden && !reducedMotion() ? '' : 'none'
+      el.style.transform = `translate(${x}px, ${y}px)`
+      el.style.width = `${t.width}px`
+      el.style.height = `${t.height}px`
+      el.style.opacity = '1'
+      if (el.style.transition === 'none') {
+        void el.offsetWidth // commit the jump before re-enabling transitions
+        el.style.transition = ''
+      }
+    }
+
+    const placeActive = (animate: boolean) => place(active, root.querySelector<HTMLElement>('.sb-link.active'), animate)
+    placeActive(true)
+    setOn(true)
+
+    const onOver = (e: PointerEvent) => {
+      const link = (e.target as HTMLElement).closest<HTMLElement>('.sb-link')
+      if (link && root.contains(link)) place(ghost, link, true)
+      else ghost.style.opacity = '0'
+    }
+    const onLeave = () => {
+      ghost.style.opacity = '0'
+    }
+    const ro = new ResizeObserver(() => placeActive(false))
+    ro.observe(root)
+    root.addEventListener('pointerover', onOver)
+    root.addEventListener('pointerleave', onLeave)
+    return () => {
+      ro.disconnect()
+      root.removeEventListener('pointerover', onOver)
+      root.removeEventListener('pointerleave', onLeave)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps)
+
+  return on
+}
+
 function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
-  const { me, team, teamId, boards, agents, unread } = ctx
+  const { me, team, base, boards, agents, unread } = ctx
   const navigate = useNavigate()
   const location = useLocation()
   const [params] = useSearchParams()
@@ -165,12 +330,15 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
   const [boardKey, setBoardKey] = useState('')
   const [boardError, setBoardError] = useState('')
   const menuRef = useRef<HTMLDivElement>(null)
+  const sideRef = useRef<HTMLElement>(null)
 
-  const base = `/app/${teamId}`
   const onList = location.pathname === base || location.pathname === `${base}/`
   const activeBoard = onList ? params.get('board') : null
   const openTotal = boards.reduce((n, b) => n + b.open_count, 0)
   const activeAgents = agents.filter((a) => a.active).length
+  const isNewTopic = useArrivals(boards.length ? boards.map((b) => b.id) : undefined)
+
+  const glide = useGlide(sideRef, [location.pathname, location.search, boards.length, adding, team.id])
 
   useEffect(() => {
     if (!menu) setJoining(false)
@@ -202,7 +370,7 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
     if (!key) return
     setBoardError('')
     try {
-      const b = await api.createBoard(teamId, key)
+      const b = await api.createBoard(ctx.teamId, key)
       setBoardKey('')
       setAdding(false)
       await ctx.refreshBoards()
@@ -213,7 +381,9 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
   }
 
   return (
-    <aside className="sidebar" aria-label="Navigation">
+    <aside className={`sidebar ${glide ? 'glide' : ''}`} aria-label="Navigation" ref={sideRef}>
+      <span className="sb-glide-active" aria-hidden="true" />
+      <span className="sb-glide-hover" aria-hidden="true" />
       <Link className="sb-brand" to={base} aria-label="swarmboard, all posts">
         <Wordmark />
       </Link>
@@ -232,20 +402,33 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
                   className="menu-item"
                   onClick={() => {
                     setMenu(false)
-                    navigate(`/app/${t.id}`)
+                    navigate(`/${t.slug}`)
                   }}
                 >
                   <span className="menu-label">{t.name}</span>
-                  {t.id === teamId ? <Icon name="check" size={14} /> : null}
+                  <span className="menu-slug mono">/{t.slug}</span>
+                  {t.id === team.id ? <Icon name="check" size={14} /> : <span className="menu-check-space" />}
                 </button>
               ))}
+              <div className="menu-sep" />
+              <button
+                role="menuitem"
+                className="menu-item"
+                onClick={() => {
+                  setMenu(false)
+                  navigate('/new')
+                }}
+              >
+                <span className="menu-label">Create org</span>
+                <Icon name="plus" size={14} />
+              </button>
               {joining ? (
                 <div className="menu-join">
                   <JoinForm refreshMe={ctx.refreshMe} compact autoFocus onDone={() => setMenu(false)} />
                 </div>
               ) : (
                 <button role="menuitem" className="menu-item" onClick={() => setJoining(true)}>
-                  <span className="menu-label">Join a board</span>
+                  <span className="menu-label">Join an org</span>
                   <Icon name="logIn" size={14} />
                 </button>
               )}
@@ -258,7 +441,7 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
             </div>
           ) : null}
         </div>
-        <Link className="btn btn-ghost btn-icon compose" to={`${base}/new`} title="New post (C)" aria-label="New post">
+        <Link className="btn btn-ghost btn-icon compose" to={`${base}/new-post`} title="New post (C)" aria-label="New post">
           <Icon name="pencil" />
         </Link>
         <button className="btn btn-ghost btn-icon nav-close" onClick={onClose} aria-label="Close menu">
@@ -269,7 +452,7 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
       <nav className="sb-nav">
         <SideLink to={base} icon="list" label="All posts" count={openTotal} active={onList && !activeBoard} />
         <SideLink to={`${base}/inbox`} icon="inbox" label="Inbox" count={unread} highlight={unread > 0} />
-        <SideLink to={`${base}/agents`} icon="terminal" label="Agents" count={activeAgents} />
+        <SideLink to={`${base}/agents`} icon="terminal" label="Agents" count={activeAgents} active={location.pathname.startsWith(`${base}/agents`)} />
         <SideLink to={`${base}/claims`} icon="lock" label="Claims" />
         <SideLink to={`${base}/activity`} icon="activity" label="Activity" />
       </nav>
@@ -277,7 +460,7 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
       <div className="sb-section">
         <div className="sb-label">
           <span>Topics</span>
-          <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setAdding((a) => !a)} aria-label="New topic" title="New topic">
+          <button className="btn btn-ghost btn-sm btn-icon sb-add-btn" onClick={() => setAdding((a) => !a)} aria-label="New topic" title="New topic">
             <Icon name="plus" size={14} />
           </button>
         </div>
@@ -305,6 +488,7 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
               count={b.open_count}
               active={activeBoard === b.key}
               title={b.name !== b.key ? b.name : undefined}
+              fresh={isNewTopic(b.id)}
             />
           ))}
         </nav>
@@ -313,7 +497,13 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
       <div className="sb-bottom">
         <nav className="sb-nav">
           <SideLink to={`${base}/connect`} icon="plug" label="Connect" />
-          <SideLink to={`${base}/team`} icon="users" label="Team" countText={`${team.member_count}/${team.max_members}`} />
+          <SideLink
+            to={`${base}/team`}
+            icon="users"
+            label="Team"
+            countText={`${team.member_count}/${team.max_members}`}
+            active={location.pathname === `${base}/team` || location.pathname.startsWith(`${base}/members/`)}
+          />
         </nav>
         <div className="sb-me">
           <span className="mono">{me.user.handle}</span>
@@ -332,19 +522,20 @@ function SideLink(props: {
   active?: boolean
   highlight?: boolean
   title?: string
+  fresh?: boolean
 }) {
-  const { to, icon, label, count, countText, active, highlight, title } = props
+  const { to, icon, label, count, countText, active, highlight, title, fresh } = props
   const text = countText ?? (count ? String(count) : '')
   return (
-    <NavLink
+    <TNavLink
       to={to}
       end
       title={title}
-      className={({ isActive }) => `sb-link ${(active ?? isActive) ? 'active' : ''}`}
+      className={({ isActive }) => `sb-link ${(active ?? isActive) ? 'active' : ''} ${fresh ? 'arrive' : ''}`}
     >
       <Icon name={icon} />
       <span className="sb-link-label">{label}</span>
-      {text ? <span className={`sb-count ${highlight ? 'hl' : ''}`}>{text}</span> : null}
-    </NavLink>
+      {text ? <Count value={text} className={`sb-count ${highlight ? 'hl' : ''}`} /> : null}
+    </TNavLink>
   )
 }

@@ -1,7 +1,7 @@
-//! Me, teams, members, invites, API tokens.
+//! Me, orgs (teams), members, invites, API tokens.
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     routing::{delete, get, patch, post},
     Json, Router,
 };
@@ -20,6 +20,9 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/me", get(get_me).patch(patch_me))
+        .route("/api/orgs", post(create_org))
+        .route("/api/orgs/slug", get(check_slug))
+        .route("/api/orgs/{slug}", get(get_org))
         .route("/api/teams/{tid}", get(get_team).patch(patch_team))
         .route("/api/teams/{tid}/invite", post(rotate_invite))
         .route("/api/teams/{tid}/members/{uid}", patch(patch_member).delete(remove_member))
@@ -54,6 +57,43 @@ async fn patch_me(State(state): State<AppState>, CurrentUser(user): CurrentUser,
     Ok(Json(json!({ "user": user })))
 }
 
+// --- orgs -------------------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct NewOrg {
+    name: String,
+    slug: Option<String>,
+}
+
+/// `{name, slug?}` -> TeamSummary; the caller becomes owner.
+async fn create_org(State(state): State<AppState>, CurrentUser(user): CurrentUser, JsonBody(body): JsonBody<NewOrg>) -> AppResult<Json<accounts::TeamSummary>> {
+    Ok(Json(accounts::create_org(&state.db, &user.id, &body.name, body.slug.as_deref()).await?))
+}
+
+#[derive(Deserialize)]
+struct SlugQuery {
+    #[serde(default)]
+    slug: String,
+}
+
+/// `?slug=x` -> `{slug, available, reason?}` for live checks while typing.
+async fn check_slug(
+    State(state): State<AppState>,
+    CurrentUser(_user): CurrentUser,
+    Query(q): Query<SlugQuery>,
+) -> AppResult<Json<accounts::SlugAvailability>> {
+    if q.slug.len() > 256 {
+        return Err(AppError::BadRequest("slug is too long".into()));
+    }
+    Ok(Json(accounts::slug_availability(&state.db, &q.slug).await?))
+}
+
+/// TeamSummary for members; 404 for everyone else, so slugs don't leak which orgs exist.
+async fn get_org(State(state): State<AppState>, CurrentUser(user): CurrentUser, PathParam(slug): PathParam<String>) -> AppResult<Json<accounts::TeamSummary>> {
+    let org = accounts::org_by_slug(&state.db, &slug, &user.id).await?;
+    Ok(Json(org.ok_or_else(|| AppError::NotFound("org not found".into()))?))
+}
+
 // --- teams ------------------------------------------------------------------------------------
 
 async fn get_team(State(state): State<AppState>, CurrentUser(user): CurrentUser, PathParam(tid): PathParam<String>) -> AppResult<Json<Value>> {
@@ -74,6 +114,7 @@ async fn get_team(State(state): State<AppState>, CurrentUser(user): CurrentUser,
 #[derive(Deserialize)]
 struct PatchTeam {
     name: Option<String>,
+    slug: Option<String>,
 }
 
 async fn patch_team(
@@ -82,11 +123,9 @@ async fn patch_team(
     PathParam(tid): PathParam<String>,
     JsonBody(body): JsonBody<PatchTeam>,
 ) -> AppResult<Json<Value>> {
-    require_admin(&state, &tid, &user.id).await?;
-    let team = match body.name {
-        Some(name) => accounts::rename_team(&state.db, &tid, &name).await?,
-        None => accounts::get_team(&state.db, &tid).await?.ok_or_else(|| AppError::NotFound("team not found".into()))?,
-    };
+    require_member(&state, &tid, &user.id).await?;
+    // Name: owner or admin. Slug: owner only (checked in the domain, along with no-op edits).
+    let team = accounts::update_team(&state.db, &tid, &user.id, body.name.as_deref(), body.slug.as_deref()).await?;
     Ok(Json(json!({ "team": team })))
 }
 
@@ -153,7 +192,8 @@ async fn accept_invite(State(state): State<AppState>, CurrentUser(user): Current
         return Err(AppError::NotFound("this invite link is no longer valid".into()));
     }
     let (team_id, _) = accounts::join_via_invite(&state.db, &code, &user.id).await?;
-    Ok(Json(json!({ "team_id": team_id })))
+    let team = accounts::get_team(&state.db, &team_id).await?.ok_or_else(|| AppError::NotFound("org not found".into()))?;
+    Ok(Json(json!({ "team_id": team_id, "slug": team.slug })))
 }
 
 // --- API tokens -------------------------------------------------------------------------------

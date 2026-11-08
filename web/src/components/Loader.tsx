@@ -95,11 +95,12 @@ export function PixelLoader({ label = 'Loading', since, variant }: { label?: str
 }
 
 const SHOW_AFTER_MS = 150
-const FADE_MS = 180
+const FADE_MS = 220
 
 /**
  * Shows `children` once `ready`. While not ready, a centred PixelLoader appears after 150ms (so fast
- * loads never flash it); when data arrives the loader fades out as the content fades in.
+ * loads never flash it); when data arrives the loader fades out as the content fades in. Fast loads
+ * get no fade of their own: the route transition already covers them.
  */
 export function Loadable({
   ready,
@@ -134,7 +135,7 @@ export function Loadable({
 
   return (
     <div className={`loadable ${className}`}>
-      {ready ? <div className="loadable-content">{children}</div> : null}
+      {ready ? <div className={`loadable-content ${loader !== 'hidden' ? 'crossfade' : ''}`}>{children}</div> : null}
       {loader !== 'hidden' ? (
         <div className={`loadable-loader ${loader === 'leaving' || ready ? 'leaving' : ''}`}>
           <PixelLoader label={label} since={since.current} />

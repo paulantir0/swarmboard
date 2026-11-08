@@ -122,10 +122,20 @@ async fn verify(State(state): State<AppState>, headers: HeaderMap, jar: CookieJa
     }
     let secret = accounts::create_session(&state.db, &user.id).await?;
     let teams = accounts::list_user_teams(&state.db, &user.id).await?;
+    let joined_team_slug = joined_team_id.as_ref().and_then(|id| teams.iter().find(|t| &t.id == id)).map(|t| t.slug.clone());
+    // No orgs yet: the web shows "Name your org".
+    let needs_org = teams.is_empty();
     let jar = jar.add(session_cookie(&state.cfg, &secret));
     Ok((
         jar,
-        Json(json!({ "user": user, "teams": teams, "joined_team_id": joined_team_id, "join_error": join_error })),
+        Json(json!({
+            "user": user,
+            "teams": teams,
+            "joined_team_id": joined_team_id,
+            "joined_team_slug": joined_team_slug,
+            "join_error": join_error,
+            "needs_org": needs_org,
+        })),
     ))
 }
 
@@ -420,8 +430,10 @@ mod tests {
         assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Lax") && cookie.contains("Max-Age=2592000"));
         let body = body_json(res).await;
         assert_eq!(body["user"]["handle"], "flow");
-        assert_eq!(body["teams"][0]["role"], "owner");
+        assert_eq!(body["teams"], json!([]), "signup creates no org");
         assert_eq!(body["joined_team_id"], Value::Null);
+        assert_eq!(body["joined_team_slug"], Value::Null);
+        assert_eq!(body["needs_org"], true);
         let session = cookie.split(';').next().unwrap().to_string();
 
         // Reusing the link fails.
@@ -439,7 +451,7 @@ mod tests {
         assert_eq!(res.status(), StatusCode::OK);
         let body = body_json(res).await;
         assert_eq!(body["user"]["email"], "flow@example.com");
-        assert_eq!(body["teams"][0]["max_members"], 5);
+        assert_eq!(body["teams"], json!([]));
 
         let res = app.clone().oneshot(me(None)).await.unwrap();
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
@@ -472,7 +484,7 @@ mod tests {
         let app = crate::app(state.clone());
         let db = &state.db;
         let (owner, _) = accounts::find_or_create_user(db, "owner@example.com").await.unwrap();
-        let tid = accounts::list_user_teams(db, &owner.id).await.unwrap()[0].id.clone();
+        let tid = accounts::create_org(db, &owner.id, "Crew HQ", None).await.unwrap().id;
         let code = accounts::current_invite(db, &tid, &owner.id).await.unwrap();
         let mut ids = vec![];
         for h in ["adam", "mia", "max"] {
@@ -568,7 +580,7 @@ mod tests {
         let state = test_state().await;
         let app = crate::app(state.clone());
         let (owner, _) = accounts::find_or_create_user(&state.db, "owner@example.com").await.unwrap();
-        let team = accounts::list_user_teams(&state.db, &owner.id).await.unwrap()[0].id.clone();
+        let team = accounts::create_org(&state.db, &owner.id, "Acme", None).await.unwrap().id;
         let code = accounts::current_invite(&state.db, &team, &owner.id).await.unwrap();
 
         // The invite code is stored with the login token when valid.
@@ -589,7 +601,93 @@ mod tests {
         assert_eq!(res.status(), StatusCode::OK);
         let body = body_json(res).await;
         assert_eq!(body["joined_team_id"], json!(team));
-        assert_eq!(body["teams"].as_array().unwrap().len(), 2);
+        assert_eq!(body["joined_team_slug"], "acme");
+        assert_eq!(body["needs_org"], false);
+        assert_eq!(body["teams"].as_array().unwrap().len(), 1);
+        assert_eq!(body["teams"][0]["slug"], "acme");
+
+        // The owner signing in again (no invite) already has an org.
+        let secret = accounts::create_login_token(&state.db, "owner@example.com", None).await.unwrap();
+        let body = body_json(app.clone().oneshot(post_json("/api/auth/verify", json!({"token": secret}))).await.unwrap()).await;
+        assert_eq!((body["needs_org"].clone(), body["joined_team_slug"].clone()), (json!(false), Value::Null));
+    }
+
+    /// Org routes end to end: create, availability, lookup by slug, invites, slug changes.
+    #[tokio::test]
+    async fn org_routes() {
+        let state = test_state().await;
+        let app = crate::app(state.clone());
+        let db = &state.db;
+        let (paul, _) = accounts::find_or_create_user(db, "paul@example.com").await.unwrap();
+        let (zed, _) = accounts::find_or_create_user(db, "zed@example.com").await.unwrap();
+        let c_paul = format!("sb_session={}", accounts::create_session(db, &paul.id).await.unwrap());
+        let c_zed = format!("sb_session={}", accounts::create_session(db, &zed.id).await.unwrap());
+        let send = |method: &str, uri: &str, cookie: &str, body: Option<Value>| {
+            let req = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header(header::COOKIE, cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(body.map(|b| Body::from(b.to_string())).unwrap_or_else(Body::empty))
+                .unwrap();
+            let app = app.clone();
+            async move {
+                let res = app.oneshot(req).await.unwrap();
+                let status = res.status();
+                (status, body_json(res).await)
+            }
+        };
+
+        let (st, b) = send("GET", "/api/orgs/slug?slug=Acme%20Inc", &c_paul, None).await;
+        assert_eq!((st, b), (StatusCode::OK, json!({"slug": "acme-inc", "available": true})));
+        let (st, org) = send("POST", "/api/orgs", &c_paul, Some(json!({"name": "Acme Inc"}))).await;
+        assert_eq!(st, StatusCode::OK);
+        let tid = org["id"].as_str().unwrap().to_string();
+        assert_eq!(org, json!({"id": tid, "name": "Acme Inc", "slug": "acme-inc", "role": "owner", "member_count": 1, "max_members": 5}));
+        let (st, b) = send("GET", "/api/orgs/slug?slug=ACME-inc", &c_zed, None).await;
+        assert_eq!((st, b), (StatusCode::OK, json!({"slug": "acme-inc", "available": false, "reason": "swarmboard.app/acme-inc is taken"})));
+        let (st, b) = send("POST", "/api/orgs", &c_zed, Some(json!({"name": "Mine", "slug": "Acme-Inc"}))).await;
+        assert_eq!((st, b), (StatusCode::CONFLICT, json!({"error": "conflict", "message": "swarmboard.app/acme-inc is taken"})));
+        let (st, b) = send("POST", "/api/orgs", &c_zed, Some(json!({"name": "Mine", "slug": "settings"}))).await;
+        assert_eq!((st, b["error"].as_str()), (StatusCode::BAD_REQUEST, Some("bad_request")));
+        let (st, _) = send("POST", "/api/orgs", "sb_session=nope", Some(json!({"name": "Mine"}))).await;
+        assert_eq!(st, StatusCode::UNAUTHORIZED);
+
+        // /api/me and /api/teams/:tid carry the slug.
+        let (_, me) = send("GET", "/api/me", &c_paul, None).await;
+        assert_eq!(me["teams"][0]["slug"], "acme-inc");
+        let (_, t) = send("GET", &format!("/api/teams/{tid}"), &c_paul, None).await;
+        assert_eq!(t["team"]["slug"], "acme-inc");
+
+        // By slug: members only; others get the same 404 as an unknown slug.
+        let (st, b) = send("GET", "/api/orgs/Acme-Inc", &c_paul, None).await;
+        assert_eq!((st, b["id"].as_str()), (StatusCode::OK, Some(tid.as_str())));
+        let (st, b) = send("GET", "/api/orgs/acme-inc", &c_zed, None).await;
+        let (st2, b2) = send("GET", "/api/orgs/no-such-org", &c_zed, None).await;
+        assert_eq!((st, &b), (StatusCode::NOT_FOUND, &b2));
+        assert_eq!(st2, StatusCode::NOT_FOUND);
+
+        // Invites show and return the slug.
+        let code = t["invite"]["code"].as_str().unwrap().to_string();
+        let (st, b) = send("GET", &format!("/api/invites/{code}"), &c_zed, None).await;
+        assert_eq!((st, b["team_slug"].as_str(), b["team_name"].as_str()), (StatusCode::OK, Some("acme-inc"), Some("Acme Inc")));
+        let (st, b) = send("POST", &format!("/api/invites/{code}/accept"), &c_zed, None).await;
+        assert_eq!((st, b), (StatusCode::OK, json!({"team_id": tid, "slug": "acme-inc"})));
+        let (st, b) = send("GET", "/api/orgs/acme-inc", &c_zed, None).await;
+        assert_eq!((st, b["role"].as_str()), (StatusCode::OK, Some("member")));
+
+        // PATCH: slug is owner-only.
+        accounts::set_role(db, &tid, &paul.id, &zed.id, "admin").await.unwrap();
+        let uri = format!("/api/teams/{tid}");
+        let (st, _) = send("PATCH", &uri, &c_zed, Some(json!({"slug": "zed-co"}))).await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+        let (st, b) = send("PATCH", &uri, &c_zed, Some(json!({"name": "Acme", "slug": "acme-inc"}))).await;
+        assert_eq!((st, b["team"]["name"].as_str()), (StatusCode::OK, Some("Acme")), "admin renames; unchanged slug is fine");
+        accounts::create_org(db, &zed.id, "Zed Co", None).await.unwrap();
+        let (st, _) = send("PATCH", &uri, &c_paul, Some(json!({"slug": "zed-co"}))).await;
+        assert_eq!(st, StatusCode::CONFLICT);
+        let (st, b) = send("PATCH", &uri, &c_paul, Some(json!({"slug": "acme"}))).await;
+        assert_eq!((st, b["team"]["slug"].as_str()), (StatusCode::OK, Some("acme")));
     }
 
     #[tokio::test]

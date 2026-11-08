@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { api, ApiError, POST_KINDS, POST_STATUSES, type Post, type PostPatch, type PostStatus } from '../api'
+import { Ago } from '../components/Ago'
 import { ConfirmButton } from '../components/Confirm'
 import { Icon } from '../components/Icon'
 import { Loadable } from '../components/Loader'
@@ -9,7 +10,6 @@ import { MarkdownField } from '../components/MarkdownField'
 import { PriorityIcon, StatusIcon, Who } from '../components/Marks'
 import { Title } from '../components/Title'
 import { KIND_LABEL, PRIORITY_LABEL, STATUS_LABEL } from '../lib/labels'
-import { ago, fullDate } from '../lib/time'
 import { usePoll } from '../lib/usePoll'
 import { useShell } from './context'
 import { Claim } from './PostList'
@@ -18,7 +18,7 @@ import { ViewHeader } from './ViewHeader'
 const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
 
 export function PostView() {
-  const { teamId, boards, me, refreshBoards } = useShell()
+  const { teamId, base, boards, me, refreshBoards } = useShell()
   const { n = '' } = useParams()
   const number = Number(n)
   const detail = usePoll(() => api.post(teamId, number), [teamId, number])
@@ -94,7 +94,7 @@ export function PostView() {
   }
 
   const back = (
-    <Link className="btn btn-ghost btn-icon" to={post ? `/app/${teamId}?board=${encodeURIComponent(post.board_key)}` : `/app/${teamId}`} aria-label="Back">
+    <Link className="btn btn-ghost btn-icon" to={post ? `${base}?board=${encodeURIComponent(post.board_key)}` : base} aria-label="Back">
       <Icon name="arrowLeft" />
     </Link>
   )
@@ -119,7 +119,7 @@ export function PostView() {
         back={back}
         title={
           <>
-            <Link className="crumb" to={`/app/${teamId}?board=${encodeURIComponent(post.board_key)}`}>
+            <Link className="crumb" to={`${base}?board=${encodeURIComponent(post.board_key)}`}>
               {post.board_key}
             </Link>
             <span className="crumb-sep">/</span>
@@ -169,9 +169,7 @@ export function PostView() {
               </h2>
               <div className="detail-byline">
                 <Who author={post.author} me={meId} />
-                <span className="muted mono" title={fullDate(post.created_at)}>
-                  {ago(post.created_at)}
-                </span>
+                <Ago ts={post.created_at} className="muted mono" />
               </div>
               {post.body.trim() ? <Markdown source={post.body} className="detail-body" /> : null}
             </>
@@ -185,9 +183,7 @@ export function PostView() {
               <div className="comment" key={c.id}>
                 <div className="comment-head">
                   <Who author={c.author} me={meId} />
-                  <span className="muted mono" title={fullDate(c.created_at)}>
-                    {ago(c.created_at)}
-                  </span>
+                  <Ago ts={c.created_at} className="muted mono" />
                 </div>
                 <Markdown source={c.body} className="comment-body" />
               </div>
@@ -226,7 +222,7 @@ export function PostView() {
                 <>
                   <div className="claim-who">
                     <Claim author={claimer} meId={meId} />
-                    {post.claimed_at ? <span className="muted mono">{ago(post.claimed_at)}</span> : null}
+                    {post.claimed_at ? <Ago ts={post.claimed_at} className="muted mono" /> : null}
                   </div>
                   <div className="claim-actions">
                     {mine ? (
@@ -291,9 +287,7 @@ export function PostView() {
           />
           <div className="prop">
             <span className="prop-label">Updated</span>
-            <span className="prop-value mono muted" title={fullDate(post.updated_at)}>
-              {ago(post.updated_at)}
-            </span>
+            <Ago ts={post.updated_at} className="prop-value mono muted" />
           </div>
           {error ? <p className="error-text prop-error">{error}</p> : null}
         </aside>

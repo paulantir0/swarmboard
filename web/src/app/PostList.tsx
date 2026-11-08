@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { api, POST_KINDS, POST_STATUSES, type Post, type PostStatus } from '../api'
+import { Ago } from '../components/Ago'
 import { Icon } from '../components/Icon'
 import { Loadable } from '../components/Loader'
 import { PriorityIcon, StatusIcon, Who } from '../components/Marks'
 import { Title } from '../components/Title'
 import { KIND_LABEL, STATUS_LABEL, STATUS_ORDER } from '../lib/labels'
-import { ago } from '../lib/time'
 import { usePoll } from '../lib/usePoll'
 import { useShell } from './context'
+import { TLink, useArrivals } from './motion'
 import { ViewHeader } from './ViewHeader'
 
 const COLLAPSE_KEY = 'sb:collapsed-groups'
@@ -32,7 +33,7 @@ function writeCollapsed(s: Set<string>) {
 }
 
 export function PostList() {
-  const { teamId, boards, me } = useShell()
+  const { teamId, base, boards, me } = useShell()
   const [params, setParams] = useSearchParams()
   const board = params.get('board') ?? ''
   const kind = params.get('kind') ?? ''
@@ -83,6 +84,8 @@ export function PostList() {
     [teamId, board, kind, status, q],
   )
 
+  const isNew = useArrivals(posts.data?.map((p) => p.id))
+
   const groups = useMemo(() => {
     const by = new Map<PostStatus, Post[]>()
     for (const p of posts.data ?? []) {
@@ -108,7 +111,7 @@ export function PostList() {
 
   const boardInfo = boards.find((b) => b.key === board)
   const filtered = Boolean(kind || status || q)
-  const newHref = `/app/${teamId}/new${board ? `?board=${encodeURIComponent(board)}` : ''}`
+  const newHref = `${base}/new-post${board ? `?board=${encodeURIComponent(board)}` : ''}`
 
   return (
     <div className="view">
@@ -199,7 +202,7 @@ export function PostList() {
                   <span className="group-count mono">{g.posts.length}</span>
                 </button>
                 {!isCollapsed
-                  ? g.posts.map((p) => <PostRow key={p.id} post={p} teamId={teamId} showBoard={!board} meId={me.user.id} />)
+                  ? g.posts.map((p) => <PostRow key={p.id} post={p} base={base} showBoard={!board} meId={me.user.id} fresh={isNew(p.id)} />)
                   : null}
               </section>
             )
@@ -211,9 +214,9 @@ export function PostList() {
   )
 }
 
-function PostRow({ post, teamId, showBoard, meId }: { post: Post; teamId: string; showBoard: boolean; meId: string }) {
+export function PostRow({ post, base, showBoard, meId, fresh }: { post: Post; base: string; showBoard: boolean; meId: string; fresh: boolean }) {
   return (
-    <Link className="row" to={`/app/${teamId}/p/${post.number}`} role="listitem">
+    <TLink className={`row ${fresh ? 'arrive' : ''}`} to={`${base}/p/${post.number}`} role="listitem">
       <span className="c-pri">{post.priority ? <PriorityIcon priority={post.priority} /> : null}</span>
       <span className="c-num mono">#{post.number}</span>
       <span className="c-status">
@@ -233,22 +236,20 @@ function PostRow({ post, teamId, showBoard, meId }: { post: Post; teamId: string
         ) : null}
       </span>
       <span className="c-kind">{KIND_LABEL[post.kind] ?? post.kind}</span>
-      <span className="c-claim">{post.claimed_by ? <Claim author={post.claimed_by} meId={meId} /> : null}</span>
+      <span className="c-claim">{post.claimed_by ? <Claim author={post.claimed_by} meId={meId} nested /> : null}</span>
       <span className="c-author">
-        <Who author={post.author} me={meId} />
+        <Who author={post.author} me={meId} nested />
       </span>
-      <span className="c-time mono" title={new Date(post.updated_at).toLocaleString()}>
-        {ago(post.updated_at)}
-      </span>
-    </Link>
+      <Ago ts={post.updated_at} className="c-time mono" />
+    </TLink>
   )
 }
 
-export function Claim({ author, meId }: { author: Post['author']; meId: string }) {
+export function Claim({ author, meId, nested }: { author: Post['author']; meId: string; nested?: boolean }) {
   return (
     <span className="claim" title={`Claimed by ${author.display}`}>
       <span className="claim-mark" aria-hidden="true" />
-      <Who author={author} me={meId} />
+      <Who author={author} me={meId} nested={nested} />
     </span>
   )
 }

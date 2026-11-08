@@ -33,6 +33,20 @@ const API_TOKEN_DISPLAY_LEN: usize = 11;
 const TOKEN_TOUCH_INTERVAL_MS: i64 = 60 * 1000;
 const MAX_ACTIVE_TOKENS: i64 = 25;
 const TEAM_NAME_MAX_LEN: usize = 60;
+/// Org slugs: swarmboard.app/<slug>.
+pub const SLUG_MIN_LEN: usize = 2;
+pub const SLUG_MAX_LEN: usize = 32;
+/// Shown in "swarmboard.app/<slug> is taken".
+pub const ORG_URL_HOST: &str = "swarmboard.app";
+/// Paths the web app and API use at the top level, so they can't be org slugs. "slug" also
+/// keeps GET /api/orgs/slug (the availability check) from shadowing an org.
+pub const RESERVED_SLUGS: &[&str] = &[
+    "app", "api", "auth", "join", "new", "orgs", "org", "f", "u", "p", "mcp", "healthz", "assets", "brand", "fonts", "crew",
+    "login", "logout", "signup", "settings", "admin", "www", "docs", "help", "about", "terms", "privacy", "static", "invite",
+    "connect", "github", "slug",
+];
+/// Orgs one user may own.
+pub const MAX_OWNED_ORGS: i64 = 5;
 const TOKEN_LABEL_MAX_LEN: usize = 60;
 
 // ---------------------------------------------------------------------------------------------
@@ -51,6 +65,7 @@ pub struct User {
 pub struct Team {
     pub id: String,
     pub name: String,
+    pub slug: String,
     pub owner_id: String,
     pub created_at: i64,
 }
@@ -90,6 +105,7 @@ impl Role {
 pub struct TeamSummary {
     pub id: String,
     pub name: String,
+    pub slug: String,
     /// "owner" | "admin" | "member"
     pub role: String,
     pub member_count: i64,
@@ -110,6 +126,7 @@ pub struct Member {
 #[derive(Debug, Clone, Serialize)]
 pub struct InviteInfo {
     pub team_name: String,
+    pub team_slug: String,
     pub inviter_handle: String,
     pub member_count: i64,
     pub max_members: i64,
@@ -251,7 +268,7 @@ pub async fn get_user(db: &SqlitePool, user_id: &str) -> AppResult<Option<User>>
         .await?)
 }
 
-/// Finds the user for `email`, or creates them together with their personal team.
+/// Finds the user for `email`, or creates them (with no orgs: they name one, or join via invite).
 /// Returns `(user, created)`.
 pub async fn find_or_create_user(db: &SqlitePool, email: &str) -> AppResult<(User, bool)> {
     let email = normalize_email(email).ok_or_else(|| AppError::BadRequest("invalid email".into()))?;
@@ -272,30 +289,9 @@ pub async fn find_or_create_user(db: &SqlitePool, email: &str) -> AppResult<(Use
         .bind(user.created_at)
         .execute(&mut *tx)
         .await?;
-    create_personal_team(&mut tx, &user).await?;
     tx.commit().await?;
     tracing::info!(user_id = %user.id, handle = %user.handle, "user created");
     Ok((user, true))
-}
-
-/// "<handle>'s board" with no topics (agents create them on first post); `user` becomes owner. Returns the team id.
-async fn create_personal_team(conn: &mut SqliteConnection, user: &User) -> AppResult<String> {
-    let now = now_ms();
-    let team_id = new_id("tm");
-    sqlx::query("INSERT INTO teams (id, name, owner_id, created_at) VALUES (?, ?, ?, ?)")
-        .bind(&team_id)
-        .bind(format!("{}'s board", user.handle))
-        .bind(&user.id)
-        .bind(now)
-        .execute(&mut *conn)
-        .await?;
-    sqlx::query("INSERT INTO memberships (team_id, user_id, role, joined_at) VALUES (?, ?, 'owner', ?)")
-        .bind(&team_id)
-        .bind(&user.id)
-        .bind(now)
-        .execute(&mut *conn)
-        .await?;
-    Ok(team_id)
 }
 
 /// Changes the user's handle. Conflict if someone else has it.
@@ -320,7 +316,7 @@ pub async fn update_handle(db: &SqlitePool, user_id: &str, raw: &str) -> AppResu
 /// Teams the user belongs to: own team(s) first, then joined ones in join order.
 pub async fn list_user_teams(db: &SqlitePool, user_id: &str) -> AppResult<Vec<TeamSummary>> {
     Ok(sqlx::query_as::<_, TeamSummary>(
-        "SELECT t.id, t.name, m.role, \
+        "SELECT t.id, t.name, t.slug, m.role, \
                 (SELECT COUNT(*) FROM memberships m2 WHERE m2.team_id = t.id) AS member_count, \
                 ? AS max_members \
          FROM memberships m JOIN teams t ON t.id = m.team_id \
@@ -338,7 +334,7 @@ pub async fn member_role(db: &SqlitePool, team_id: &str, user_id: &str) -> AppRe
 }
 
 pub async fn get_team(db: &SqlitePool, team_id: &str) -> AppResult<Option<Team>> {
-    Ok(sqlx::query_as::<_, Team>("SELECT id, name, owner_id, created_at FROM teams WHERE id = ?")
+    Ok(sqlx::query_as::<_, Team>("SELECT id, name, slug, owner_id, created_at FROM teams WHERE id = ?")
         .bind(team_id)
         .fetch_optional(db)
         .await?)
@@ -356,13 +352,217 @@ pub async fn list_members(db: &SqlitePool, team_id: &str) -> AppResult<Vec<Membe
     .await?)
 }
 
-pub async fn rename_team(db: &SqlitePool, team_id: &str, raw_name: &str) -> AppResult<Team> {
-    let name = raw_name.trim();
+fn validate_team_name(raw: &str) -> AppResult<String> {
+    let name = raw.trim();
     if name.is_empty() || name.chars().count() > TEAM_NAME_MAX_LEN {
         return Err(AppError::BadRequest(format!("name must be 1-{TEAM_NAME_MAX_LEN} characters")));
     }
-    sqlx::query("UPDATE teams SET name = ? WHERE id = ?").bind(name).bind(team_id).execute(db).await?;
-    get_team(db, team_id).await?.ok_or_else(|| AppError::NotFound("team not found".into()))
+    Ok(name.to_string())
+}
+
+/// Owner/admin may rename; only the owner may change the slug (a no-op slug passes for anyone).
+/// Records `org_renamed` with whichever of `name` / `slug` actually changed.
+pub async fn update_team(
+    db: &SqlitePool,
+    team_id: &str,
+    actor_id: &str,
+    raw_name: Option<&str>,
+    raw_slug: Option<&str>,
+) -> AppResult<Team> {
+    let name = raw_name.map(validate_team_name).transpose()?;
+    let slug = raw_slug.map(validate_slug).transpose()?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let role = role_in(&mut *tx, team_id, actor_id)
+        .await?
+        .ok_or_else(|| AppError::Forbidden("not a member of this org".into()))?;
+    let (cur_name, cur_slug): (String, String) = sqlx::query_as("SELECT name, slug FROM teams WHERE id = ?")
+        .bind(team_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| AppError::NotFound("org not found".into()))?;
+    let name = name.filter(|n| *n != cur_name);
+    let slug = slug.filter(|s| *s != cur_slug);
+    if (name.is_some() || slug.is_some()) && !role.is_admin() {
+        return Err(AppError::Forbidden("only the org owner or an admin can do that".into()));
+    }
+    if slug.is_some() && role != Role::Owner {
+        return Err(AppError::Forbidden("only the org owner can change its URL".into()));
+    }
+    if let Some(n) = &name {
+        sqlx::query("UPDATE teams SET name = ? WHERE id = ?").bind(n).bind(team_id).execute(&mut *tx).await?;
+    }
+    if let Some(sl) = &slug {
+        let res = sqlx::query("UPDATE teams SET slug = ? WHERE id = ?").bind(sl).bind(team_id).execute(&mut *tx).await;
+        match res {
+            Err(sqlx::Error::Database(e)) if e.is_unique_violation() => return Err(slug_taken(sl)),
+            other => {
+                other?;
+            }
+        }
+    }
+    if name.is_some() || slug.is_some() {
+        let mut data = serde_json::Map::new();
+        if let Some(n) = &name {
+            data.insert("name".into(), n.clone().into());
+        }
+        if let Some(sl) = &slug {
+            data.insert("slug".into(), sl.clone().into());
+        }
+        insert_event(&mut *tx, team_id, actor_id, "org_renamed", data.into()).await?;
+    }
+    tx.commit().await?;
+    get_team(db, team_id).await?.ok_or_else(|| AppError::NotFound("org not found".into()))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Orgs (user-facing name for teams): slugs, creation, lookup by slug
+// ---------------------------------------------------------------------------------------------
+
+/// Lenient form of what someone typed: ASCII-lowercased, runs of anything outside `[a-z0-9]`
+/// collapsed to one '-', trimmed of '-'. Not length-checked ("Acme Corp!" -> "acme-corp").
+pub fn normalize_slug(raw: &str) -> String {
+    let mut out = String::new();
+    for c in raw.chars() {
+        let c = c.to_ascii_lowercase();
+        if c.is_ascii_lowercase() || c.is_ascii_digit() {
+            out.push(c);
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+/// Checks an already-normalized slug: 2-32 of `[a-z0-9-]`, no leading/trailing/double '-', not reserved.
+pub fn check_slug(slug: &str) -> AppResult<()> {
+    let ok_chars = slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if slug.len() < SLUG_MIN_LEN
+        || slug.len() > SLUG_MAX_LEN
+        || !ok_chars
+        || slug.starts_with('-')
+        || slug.ends_with('-')
+        || slug.contains("--")
+    {
+        return Err(AppError::BadRequest(format!("URL must be {SLUG_MIN_LEN}-{SLUG_MAX_LEN} characters: a-z, 0-9, -")));
+    }
+    if RESERVED_SLUGS.contains(&slug) {
+        return Err(AppError::BadRequest(format!("{ORG_URL_HOST}/{slug} is reserved")));
+    }
+    Ok(())
+}
+
+/// `normalize_slug` then `check_slug`; the normalized slug on success.
+pub fn validate_slug(raw: &str) -> AppResult<String> {
+    let slug = normalize_slug(raw);
+    check_slug(&slug)?;
+    Ok(slug)
+}
+
+/// Slug derived from an org name: normalized and cut to 32 chars on a clean boundary.
+pub fn slug_from_name(name: &str) -> String {
+    let slug = normalize_slug(name);
+    slug[..slug.len().min(SLUG_MAX_LEN)].trim_end_matches('-').to_string()
+}
+
+fn slug_taken(slug: &str) -> AppError {
+    AppError::Conflict(format!("{ORG_URL_HOST}/{slug} is taken"))
+}
+
+/// Live availability for the "name your org" form.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SlugAvailability {
+    pub slug: String,
+    pub available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+pub async fn slug_availability(db: &SqlitePool, raw: &str) -> AppResult<SlugAvailability> {
+    let slug = normalize_slug(raw);
+    let reason = match check_slug(&slug) {
+        Err(e) => Some(e.to_string()),
+        Ok(()) => {
+            let taken: Option<i64> = sqlx::query_scalar("SELECT 1 FROM teams WHERE slug = ?").bind(&slug).fetch_optional(db).await?;
+            taken.map(|_| slug_taken(&slug).to_string())
+        }
+    };
+    Ok(SlugAvailability { available: reason.is_none(), slug, reason })
+}
+
+/// The user's view of one org they belong to; None if they aren't a member.
+pub async fn team_summary(db: &SqlitePool, team_id: &str, user_id: &str) -> AppResult<Option<TeamSummary>> {
+    Ok(sqlx::query_as::<_, TeamSummary>(
+        "SELECT t.id, t.name, t.slug, m.role, \
+                (SELECT COUNT(*) FROM memberships m2 WHERE m2.team_id = t.id) AS member_count, \
+                ? AS max_members \
+         FROM memberships m JOIN teams t ON t.id = m.team_id WHERE t.id = ? AND m.user_id = ?",
+    )
+    .bind(MAX_TEAM_MEMBERS)
+    .bind(team_id)
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?)
+}
+
+/// Like `team_summary`, by slug (any case). None for unknown slugs and non-members alike.
+pub async fn org_by_slug(db: &SqlitePool, raw_slug: &str, user_id: &str) -> AppResult<Option<TeamSummary>> {
+    let slug = raw_slug.trim();
+    if slug.is_empty() || slug.len() > SLUG_MAX_LEN {
+        return Ok(None);
+    }
+    let id: Option<String> = sqlx::query_scalar("SELECT id FROM teams WHERE slug = ?").bind(slug).fetch_optional(db).await?;
+    match id {
+        Some(id) => team_summary(db, &id, user_id).await,
+        None => Ok(None),
+    }
+}
+
+/// Creates an org owned by `user_id` (slug from `raw_slug`, else derived from the name).
+/// BadRequest for bad names/slugs or past `MAX_OWNED_ORGS`; Conflict when the slug is taken.
+pub async fn create_org(db: &SqlitePool, user_id: &str, raw_name: &str, raw_slug: Option<&str>) -> AppResult<TeamSummary> {
+    let name = validate_team_name(raw_name)?;
+    let slug = match raw_slug.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(raw) => validate_slug(raw)?,
+        None => {
+            let slug = slug_from_name(&name);
+            check_slug(&slug).map_err(|e| AppError::BadRequest(format!("choose a URL for this org ({e})")))?;
+            slug
+        }
+    };
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let owned: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memberships WHERE user_id = ? AND role = 'owner'")
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if owned >= MAX_OWNED_ORGS {
+        return Err(AppError::BadRequest(format!("you can own at most {MAX_OWNED_ORGS} orgs")));
+    }
+    let now = now_ms();
+    let team_id = new_id("tm");
+    let res = sqlx::query("INSERT INTO teams (id, name, slug, owner_id, created_at) VALUES (?, ?, ?, ?, ?)")
+        .bind(&team_id)
+        .bind(&name)
+        .bind(&slug)
+        .bind(user_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await;
+    match res {
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => return Err(slug_taken(&slug)),
+        other => {
+            other?;
+        }
+    }
+    sqlx::query("INSERT INTO memberships (team_id, user_id, role, joined_at) VALUES (?, ?, 'owner', ?)")
+        .bind(&team_id)
+        .bind(user_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+    insert_event(&mut *tx, &team_id, user_id, "org_created", serde_json::json!({ "name": name, "slug": slug })).await?;
+    tx.commit().await?;
+    tracing::info!(%team_id, %slug, %user_id, "org created");
+    team_summary(db, &team_id, user_id).await?.ok_or_else(|| AppError::NotFound("org not found".into()))
 }
 
 async fn handle_of<'e>(ex: impl SqliteExecutor<'e>, user_id: &str) -> AppResult<String> {
@@ -573,16 +773,17 @@ pub async fn rotate_invite(db: &SqlitePool, team_id: &str, user_id: &str) -> App
 
 /// None if the code is unknown or revoked.
 pub async fn invite_info(db: &SqlitePool, code: &str) -> AppResult<Option<InviteInfo>> {
-    let row: Option<(String, String, i64)> = sqlx::query_as(
-        "SELECT t.name, u.handle, (SELECT COUNT(*) FROM memberships m WHERE m.team_id = t.id) \
+    let row: Option<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT t.name, t.slug, u.handle, (SELECT COUNT(*) FROM memberships m WHERE m.team_id = t.id) \
          FROM invites i JOIN teams t ON t.id = i.team_id JOIN users u ON u.id = i.created_by \
          WHERE i.code = ? AND i.revoked_at IS NULL",
     )
     .bind(code)
     .fetch_optional(db)
     .await?;
-    Ok(row.map(|(team_name, inviter_handle, member_count)| InviteInfo {
+    Ok(row.map(|(team_name, team_slug, inviter_handle, member_count)| InviteInfo {
         team_name,
+        team_slug,
         inviter_handle,
         member_count,
         max_members: MAX_TEAM_MEMBERS,
@@ -842,9 +1043,9 @@ mod tests {
         find_or_create_user(db, email).await.unwrap().0
     }
 
+    /// An org "<handle>'s board" at /<handle>, owned by `user`.
     async fn personal_team(db: &SqlitePool, user: &User) -> String {
-        let teams = list_user_teams(db, &user.id).await.unwrap();
-        teams.into_iter().find(|t| t.role == "owner").unwrap().id
+        create_org(db, &user.id, &format!("{}'s board", user.handle), Some(&user.handle)).await.unwrap().id
     }
 
     #[test]
@@ -876,35 +1077,128 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signup_creates_team_and_default_boards() {
+    async fn signup_creates_user_without_org() {
         let db = test_pool().await;
         let (user, created) = find_or_create_user(&db, "Paul@Example.com").await.unwrap();
         assert!(created);
         assert_eq!(user.email, "paul@example.com");
         assert_eq!(user.handle, "paul");
         assert!(user.id.starts_with("usr_"));
+        assert!(list_user_teams(&db, &user.id).await.unwrap().is_empty(), "a new user has zero orgs");
 
-        let teams = list_user_teams(&db, &user.id).await.unwrap();
-        assert_eq!(teams.len(), 1);
-        assert_eq!(teams[0].name, "paul's board");
-        assert_eq!(teams[0].role, "owner");
-        assert_eq!(teams[0].member_count, 1);
-        assert_eq!(teams[0].max_members, 5);
-
-        let mut keys: Vec<String> = sqlx::query_scalar("SELECT key FROM boards WHERE team_id = ? ORDER BY key")
-            .bind(&teams[0].id)
-            .fetch_all(&db)
-            .await
-            .unwrap();
-        keys.sort();
-        assert!(keys.is_empty(), "new teams start with no topics: {keys:?}");
-
-        // Same email (any case) finds the same user without a second team.
+        // Same email (any case) finds the same user.
         let (again, created) = find_or_create_user(&db, " PAUL@example.com").await.unwrap();
         assert!(!created);
         assert_eq!(again, user);
         let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM teams").fetch_one(&db).await.unwrap();
-        assert_eq!(n, 1);
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn slug_normalization_and_validation() {
+        assert_eq!(normalize_slug("  Acme Corp! "), "acme-corp");
+        assert_eq!(normalize_slug("--a__b--c--"), "a-b-c");
+        assert_eq!(normalize_slug("Zoë's Board"), "zo-s-board");
+        assert_eq!(normalize_slug("!!!"), "");
+        assert_eq!(validate_slug("Acme").unwrap(), "acme");
+        assert_eq!(validate_slug("my-org-2").unwrap(), "my-org-2");
+        assert_eq!(validate_slug(&"a".repeat(32)).unwrap().len(), 32);
+        for bad in ["", "a", "-", "!!", &"a".repeat(33)] {
+            assert!(matches!(validate_slug(bad), Err(AppError::BadRequest(_))), "{bad:?} should be rejected");
+        }
+        // The strict check rejects what normalization would have fixed.
+        for bad in ["-ab", "ab-", "a--b", "Ab", "a b", "a_b"] {
+            assert!(check_slug(bad).is_err(), "{bad:?} should fail check_slug");
+        }
+        for r in RESERVED_SLUGS {
+            match validate_slug(&r.to_uppercase()) {
+                Err(AppError::BadRequest(m)) if r.len() >= 2 => assert_eq!(m, format!("swarmboard.app/{r} is reserved")),
+                Err(AppError::BadRequest(_)) => {}
+                other => panic!("{r}: {other:?}"),
+            }
+        }
+        assert_eq!(slug_from_name("Paul's Board"), "paul-s-board");
+        assert_eq!(slug_from_name(&format!("{}-{}", "a".repeat(31), "bcd")), "a".repeat(31), "cut on a clean boundary");
+    }
+
+    #[tokio::test]
+    async fn create_org_slugs_cap_and_events() {
+        let db = test_pool().await;
+        let paul = signup(&db, "paul@example.com").await;
+        let zed = signup(&db, "zed@example.com").await;
+
+        let org = create_org(&db, &paul.id, "  Acme Corp ", None).await.unwrap();
+        assert_eq!((org.name.as_str(), org.slug.as_str(), org.role.as_str(), org.member_count, org.max_members), ("Acme Corp", "acme-corp", "owner", 1, 5));
+        assert_eq!(list_user_teams(&db, &paul.id).await.unwrap()[0].slug, "acme-corp");
+        let ev = event_data(&db, &org.id, "org_created").await;
+        assert_eq!(ev, vec![serde_json::json!({ "name": "Acme Corp", "slug": "acme-corp" })]);
+
+        // Taken, ignoring case, whether explicit or derived.
+        for (name, slug) in [("Other", Some("ACME-corp")), ("acme corp", None)] {
+            match create_org(&db, &zed.id, name, slug).await {
+                Err(AppError::Conflict(m)) => assert_eq!(m, "swarmboard.app/acme-corp is taken"),
+                other => panic!("{other:?}"),
+            }
+        }
+        assert!(sqlx::query("INSERT INTO teams (id, name, slug, owner_id, created_at) VALUES ('tm_x', 'x', 'acme-corp', ?, 0)")
+            .bind(&zed.id)
+            .execute(&db)
+            .await
+            .is_err(), "unique index");
+        assert!(sqlx::query("UPDATE teams SET slug = 'Acme-Corp'").execute(&db).await.is_err(), "stored slugs are lowercase");
+        assert!(sqlx::query("INSERT INTO teams (id, name, owner_id, created_at) VALUES ('tm_y', 'y', ?, 0)")
+            .bind(&zed.id)
+            .execute(&db)
+            .await
+            .is_err(), "slug is required");
+
+        // Bad names and slugs.
+        assert!(matches!(create_org(&db, &zed.id, "  ", None).await, Err(AppError::BadRequest(_))));
+        assert!(matches!(create_org(&db, &zed.id, &"x".repeat(61), Some("xx")).await, Err(AppError::BadRequest(_))));
+        assert!(matches!(create_org(&db, &zed.id, "API", None).await, Err(AppError::BadRequest(_))), "derived slug reserved");
+        assert!(matches!(create_org(&db, &zed.id, "Zed", Some("join")).await, Err(AppError::BadRequest(_))));
+        assert!(matches!(create_org(&db, &zed.id, "Z", None).await, Err(AppError::BadRequest(_))), "derived slug too short");
+        assert_eq!(create_org(&db, &zed.id, "Z", Some("zz")).await.unwrap().slug, "zz");
+
+        // At most 5 owned orgs (paul has 1).
+        for i in 2..=5 {
+            create_org(&db, &paul.id, &format!("Org {i}"), None).await.unwrap();
+        }
+        match create_org(&db, &paul.id, "Org 6", None).await {
+            Err(AppError::BadRequest(m)) => assert_eq!(m, "you can own at most 5 orgs"),
+            other => panic!("{other:?}"),
+        }
+        // Joining other orgs doesn't count toward the cap.
+        let zz = org_by_slug(&db, "zz", &zed.id).await.unwrap().unwrap();
+        join_via_invite(&db, &current_invite(&db, &zz.id, &zed.id).await.unwrap(), &paul.id).await.unwrap();
+        assert_eq!(list_user_teams(&db, &paul.id).await.unwrap().len(), 6);
+    }
+
+    #[tokio::test]
+    async fn slug_availability_and_lookup() {
+        let db = test_pool().await;
+        let paul = signup(&db, "paul@example.com").await;
+        let zed = signup(&db, "zed@example.com").await;
+        let org = create_org(&db, &paul.id, "Acme", None).await.unwrap();
+
+        let a = slug_availability(&db, " New Thing ").await.unwrap();
+        assert_eq!(a, SlugAvailability { slug: "new-thing".into(), available: true, reason: None });
+        assert_eq!(serde_json::to_value(&a).unwrap(), serde_json::json!({ "slug": "new-thing", "available": true }));
+        let a = slug_availability(&db, "ACME").await.unwrap();
+        assert_eq!((a.slug.as_str(), a.available, a.reason.as_deref()), ("acme", false, Some("swarmboard.app/acme is taken")));
+        let a = slug_availability(&db, "Admin").await.unwrap();
+        assert_eq!((a.available, a.reason.as_deref()), (false, Some("swarmboard.app/admin is reserved")));
+        let a = slug_availability(&db, "x").await.unwrap();
+        assert!(!a.available && a.reason.unwrap().contains("2-32"));
+
+        // Members see it (any case); non-members and unknown slugs look the same.
+        let got = org_by_slug(&db, "ACME", &paul.id).await.unwrap().unwrap();
+        assert_eq!((got.id.as_str(), got.slug.as_str(), got.role.as_str()), (org.id.as_str(), "acme", "owner"));
+        assert!(org_by_slug(&db, "acme", &zed.id).await.unwrap().is_none());
+        assert!(org_by_slug(&db, "nope", &zed.id).await.unwrap().is_none());
+        join_via_invite(&db, &current_invite(&db, &org.id, &paul.id).await.unwrap(), &zed.id).await.unwrap();
+        assert_eq!(org_by_slug(&db, "acme", &zed.id).await.unwrap().unwrap().role, "member");
+        assert_eq!(invite_info(&db, &current_invite(&db, &org.id, &paul.id).await.unwrap()).await.unwrap().unwrap().team_slug, "acme");
     }
 
     #[tokio::test]
@@ -1389,12 +1683,111 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rename_team_validation() {
+    async fn update_team_name_and_slug_permissions() {
         let db = test_pool().await;
-        let user = signup(&db, "paul@example.com").await;
-        let team = personal_team(&db, &user).await;
-        assert_eq!(rename_team(&db, &team, "  swarm  ").await.unwrap().name, "swarm");
-        assert!(matches!(rename_team(&db, &team, "   ").await, Err(AppError::BadRequest(_))));
-        assert!(matches!(rename_team(&db, &team, &"x".repeat(61)).await, Err(AppError::BadRequest(_))));
+        let (team, owner, adam, mia, _max) = team_with_roles(&db).await;
+        let other = signup(&db, "other@example.com").await;
+        create_org(&db, &other.id, "Taken", None).await.unwrap();
+
+        // Name: owner or admin; members get 403. Validation as before.
+        assert_eq!(update_team(&db, &team, &adam.id, Some("  swarm  "), None).await.unwrap().name, "swarm");
+        assert!(matches!(update_team(&db, &team, &mia.id, Some("x"), None).await, Err(AppError::Forbidden(_))));
+        assert!(matches!(update_team(&db, &team, &owner.id, Some("   "), None).await, Err(AppError::BadRequest(_))));
+        assert!(matches!(update_team(&db, &team, &owner.id, Some(&"x".repeat(61)), None).await, Err(AppError::BadRequest(_))));
+        assert!(matches!(update_team(&db, &team, &other.id, Some("x"), None).await, Err(AppError::Forbidden(_))));
+
+        // Slug: owner only; unchanged slugs pass for anyone (forms send every field).
+        match update_team(&db, &team, &adam.id, None, Some("squad")).await {
+            Err(AppError::Forbidden(m)) => assert_eq!(m, "only the org owner can change its URL"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(update_team(&db, &team, &adam.id, Some("swarm"), Some("Owner")).await.unwrap().slug, "owner");
+        assert!(matches!(update_team(&db, &team, &owner.id, None, Some("TAKEN")).await, Err(AppError::Conflict(m)) if m == "swarmboard.app/taken is taken"));
+        assert!(matches!(update_team(&db, &team, &owner.id, None, Some("static")).await, Err(AppError::BadRequest(_))));
+        let t = update_team(&db, &team, &owner.id, Some("Crew HQ"), Some("Crew HQ")).await.unwrap();
+        assert_eq!((t.name.as_str(), t.slug.as_str()), ("Crew HQ", "crew-hq"));
+        assert_eq!(org_by_slug(&db, "crew-hq", &mia.id).await.unwrap().unwrap().id, team);
+        assert!(org_by_slug(&db, "owner", &mia.id).await.unwrap().is_none(), "old slug is free");
+
+        let ev = event_data(&db, &team, "org_renamed").await;
+        assert_eq!(
+            ev,
+            vec![
+                serde_json::json!({ "name": "swarm" }),
+                serde_json::json!({ "name": "Crew HQ", "slug": "crew-hq" }),
+            ]
+        );
+    }
+
+    /// Migration 0007 on a database built by 0001-0006 with data in it.
+    #[tokio::test]
+    async fn orgs_migration_on_old_data() {
+        use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+        use std::str::FromStr;
+        let opts = SqliteConnectOptions::from_str("sqlite::memory:").unwrap().foreign_keys(true);
+        let db = SqlitePoolOptions::new().max_connections(1).connect_with(opts).await.unwrap();
+        let full = sqlx::migrate!("./migrations");
+        let mut old = sqlx::migrate!("./migrations");
+        old.migrations = old.migrations.iter().filter(|m| m.version < 7).cloned().collect::<Vec<_>>().into();
+        old.run(&db).await.unwrap();
+        sqlx::query("INSERT INTO users (id, email, handle, created_at) VALUES ('usr_o', 'o@x.com', 'o', 1)").execute(&db).await.unwrap();
+        let teams = [
+            ("tm_aaaaaaaa1", "paul's board", 1),
+            ("tm_bbbbbbbb2", "Paul's Board!", 2),
+            ("tm_cccccccc3", "paul-s-board", 3),
+            ("tm_dddddddd4", "API", 4),
+            ("tm_eeeeeeee5", "日本", 5),
+            ("tm_ffffffff6", "x", 6),
+            ("tm_gggggggg7", "A very long team name that goes past thirty-two chars", 7),
+            ("tm_hhhhhhhh8", "ab-2", 8),
+            ("tm_iiiiiiii9", "ab", 9),
+            ("tm_jjjjjjjj0", "AB", 10),
+        ];
+        for (id, name, at) in teams {
+            sqlx::query("INSERT INTO teams (id, name, owner_id, created_at) VALUES (?, ?, 'usr_o', ?)")
+                .bind(id)
+                .bind(name)
+                .bind(at)
+                .execute(&db)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO memberships (team_id, user_id, role, joined_at) VALUES (?, 'usr_o', 'owner', ?)")
+                .bind(id)
+                .bind(at)
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+
+        full.run(&db).await.unwrap();
+        let slugs: Vec<(String, String)> = sqlx::query_as("SELECT id, slug FROM teams ORDER BY created_at").fetch_all(&db).await.unwrap();
+        let got: Vec<&str> = slugs.iter().map(|(_, s)| s.as_str()).collect();
+        assert_eq!(
+            got,
+            vec![
+                "paul-s-board",
+                "paul-s-board-2",
+                "paul-s-board-3",
+                "api-org",
+                "team",
+                "team-2",
+                "a-very-long-team-name-that-g",
+                "ab-2",
+                "ab",
+                "ab-jjjjjjjj", // "ab-2" was taken by an older team
+            ]
+        );
+        for s in &got {
+            check_slug(s).unwrap_or_else(|e| panic!("{s}: {e}"));
+        }
+        // The app reads the backfilled rows; new rows need a slug, unique ignoring case.
+        let mine = list_user_teams(&db, "usr_o").await.unwrap();
+        assert_eq!(mine.len(), 10);
+        assert!(mine.iter().any(|t| t.slug == "api-org"));
+        assert!(sqlx::query("INSERT INTO teams (id, name, owner_id, created_at) VALUES ('tm_n', 'n', 'usr_o', 1)").execute(&db).await.is_err());
+        assert!(sqlx::query("INSERT INTO teams (id, name, slug, owner_id, created_at) VALUES ('tm_n', 'n', 'team', 'usr_o', 1)").execute(&db).await.is_err());
+        assert!(sqlx::query("UPDATE teams SET slug = NULL WHERE id = 'tm_iiiiiiii9'").execute(&db).await.is_err());
+        let fk_problems: Vec<(String,)> = sqlx::query_as("SELECT \"table\" FROM pragma_foreign_key_check").fetch_all(&db).await.unwrap();
+        assert!(fk_problems.is_empty(), "{fk_problems:?}");
     }
 }

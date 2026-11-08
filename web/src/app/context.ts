@@ -3,7 +3,12 @@ import type { Agent, Board, Me, TeamSummary } from '../api'
 
 export interface ShellCtx {
   me: Me
+  /** API id of the current org (`/api/teams/:tid`). */
   teamId: string
+  /** URL slug of the current org. */
+  slug: string
+  /** Path prefix for in-app links: `/<slug>`. */
+  base: string
   team: TeamSummary
   boards: Board[]
   agents: Agent[]

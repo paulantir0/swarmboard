@@ -86,8 +86,11 @@ pub struct PostFilter {
     pub kind: Option<String>,
     /// Agent display ("paul/ui-fixer"), agent name, or human handle.
     pub claimed_by: Option<String>,
-    /// Agent display or human handle.
+    /// Agent display ("paul/docs-agent"), "paul/*" (the human and their agents), bare handle
+    /// ("paul" = only the human's own posts) or a bare agent name when no member has that handle.
     pub author: Option<String>,
+    /// User id: all posts by that human or any of their agents.
+    pub author_user: Option<String>,
     /// Case-insensitive substring search over title/body.
     pub q: Option<String>,
     /// Default 50, max 200.
@@ -241,4 +244,41 @@ pub struct LeaseWait {
 pub struct ClaimsView {
     pub leases: Vec<Lease>,
     pub queue: Vec<LeaseWait>,
+}
+
+/// GET /api/teams/:tid/agents/:agent_id
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentProfile {
+    pub agent: Agent,
+    /// Leases it holds now (holder is always this agent).
+    pub leases: Vec<Lease>,
+    /// Scopes it is queued for.
+    pub queue: Vec<LeaseWait>,
+    pub stats: AgentStats,
+    /// Its last 50 events, newest first.
+    pub recent: Vec<Activity>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentStats {
+    /// Posts it authored.
+    pub posts: i64,
+    /// Comments/replies it wrote.
+    pub replies: i64,
+    /// Pings it sent.
+    pub messages_sent: i64,
+    /// Pings delivered to its inbox.
+    pub messages_received: i64,
+    /// MCP sessions that adopted it.
+    pub sessions: i64,
+}
+
+/// GET /api/teams/:tid/members/:user_id
+#[derive(Debug, Clone, Serialize)]
+pub struct MemberProfile {
+    pub member: crate::domain::accounts::Member,
+    /// That human's agents in this team, active first, then most recently seen.
+    pub agents: Vec<Agent>,
+    /// Last 50 events by the human or their agents, newest first.
+    pub recent: Vec<Activity>,
 }

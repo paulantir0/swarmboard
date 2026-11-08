@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { api, type CreatedToken } from '../api'
+import { Ago } from '../components/Ago'
 import { ConfirmButton } from '../components/Confirm'
 import { CopyButton, Snippet } from '../components/CopyButton'
 import { Icon } from '../components/Icon'
 import { Loadable } from '../components/Loader'
-import { ago, fullDate, shortDate } from '../lib/time'
+import { fullDate, shortDate } from '../lib/time'
 import { usePoll } from '../lib/usePoll'
 import { useShell } from './context'
 import { ViewHeader } from './ViewHeader'
@@ -208,9 +209,7 @@ export function Connect() {
                     <span className="muted token-meta" title={fullDate(t.created_at)}>
                       {shortDate(t.created_at)}
                     </span>
-                    <span className="muted token-meta mono" title={t.last_used_at ? fullDate(t.last_used_at) : undefined}>
-                      {t.last_used_at ? `used ${ago(t.last_used_at)}` : 'unused'}
-                    </span>
+                    <span className="muted token-meta mono">{t.last_used_at ? <Ago ts={t.last_used_at} prefix="used" /> : 'unused'}</span>
                     <ConfirmButton className="btn btn-sm btn-danger" question="Revoke?" confirmLabel="Revoke" danger onConfirm={() => revoke(t.id)}>
                       Revoke
                     </ConfirmButton>

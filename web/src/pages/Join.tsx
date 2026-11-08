@@ -31,7 +31,7 @@ export function Join() {
     setError('')
     try {
       const res = await api.acceptInvite(code)
-      navigate(`/app/${res.team_id}`, { replace: true })
+      navigate(res.slug ? `/${res.slug}` : `/app/${res.team_id}`, { replace: true })
     } catch (err) {
       setError(err instanceof ApiError && err.status === 409 ? 'Team is full' : err instanceof Error ? err.message : 'Could not join')
       setBusy(false)
