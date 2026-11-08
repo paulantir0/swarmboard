@@ -19,7 +19,7 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::{config::Config, models::SetupSnippets, state::AppState};
 
 /// Sent in `initialize`; clients surface it to the model. Keep it short.
-pub const INSTRUCTIONS: &str = "swarmboard: other developers' agents work in the same codebases as you, on other machines.
+pub const INSTRUCTIONS: &str = "swarmboard: agents of the other developers in your org work in the same codebases as you, on other machines.
 1. Call hello first: a short name, repo (git remote URL), branch, working_on. Read the briefing.
 2. Before editing files, check/claim the paths (globs ok). Claim shared resources (ci, deploy:staging, db:migrations, port:3000) before using them.
 3. If taken: do something else, or claim with wait:true to queue; you get a ping when it's yours.
@@ -46,10 +46,20 @@ pub fn router() -> Router<AppState> {
         .layer(cors)
 }
 
-/// Shell command used by every Claude Code hook: POSTs the hook's stdin JSON to /api/hook.
-pub fn hook_command(cfg: &Config, token: &str) -> String {
+/// Shell command for one Claude Code hook event. Privacy: the hook's stdin JSON (prompts, tool
+/// inputs and outputs) never leaves the machine — only the event name, the session id and, for
+/// SessionEnd, the end reason are sent, as query parameters. Extraction is plain sed (no jq needed)
+/// and restricted to safe characters.
+pub fn hook_command(cfg: &Config, token: &str, event: &str) -> String {
+    let reason = if event == "SessionEnd" {
+        "; rs=$(printf '%s' \"$in\" | sed -n 's/.*\"reason\"[[:space:]]*:[[:space:]]*\"\\([a-z_]*\\)\".*/\\1/p' | head -n 1)"
+    } else {
+        ""
+    };
+    let reason_q = if event == "SessionEnd" { "&reason=$rs" } else { "" };
     format!(
-        "curl -fsS -m 3 -X POST -H \"Authorization: Bearer {token}\" -H \"Content-Type: application/json\" --data-binary @- {}/api/hook || true",
+        "in=$(cat); sid=$(printf '%s' \"$in\" | sed -n 's/.*\"session_id\"[[:space:]]*:[[:space:]]*\"\\([A-Za-z0-9_-]*\\)\".*/\\1/p' | head -n 1){reason}; \
+         curl -fsS -m 3 -X POST -H \"Authorization: Bearer {token}\" \"{}/api/hook?event={event}&session=$sid{reason_q}\" || true",
         cfg.public_api_url
     )
 }
@@ -71,14 +81,14 @@ pub fn setup_snippets(cfg: &Config, token: &str) -> SetupSnippets {
          # or, instead of editing config.toml:\n\
          # codex mcp add swarmboard --url {mcp_url} --bearer-token-env-var SWARMBOARD_TOKEN"
     );
-    let entry = json!([{ "hooks": [{ "type": "command", "command": hook_command(cfg, token) }] }]);
+    let entry = |ev: &str| json!([{ "hooks": [{ "type": "command", "command": hook_command(cfg, token, ev) }] }]);
     let hooks = json!({
         "hooks": {
-            "SessionStart": entry,
-            "UserPromptSubmit": entry,
-            "PostToolUse": entry,
-            "Stop": entry,
-            "SessionEnd": entry,
+            "SessionStart": entry("SessionStart"),
+            "UserPromptSubmit": entry("UserPromptSubmit"),
+            "PostToolUse": entry("PostToolUse"),
+            "Stop": entry("Stop"),
+            "SessionEnd": entry("SessionEnd"),
         }
     });
     let claude_hooks = serde_json::to_string_pretty(&hooks).unwrap_or_default();
@@ -140,8 +150,11 @@ mod tests {
         let hooks: serde_json::Value = serde_json::from_str(&s.claude_hooks).unwrap();
         for ev in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd"] {
             let cmd = hooks["hooks"][ev][0]["hooks"][0]["command"].as_str().unwrap();
-            assert!(cmd.starts_with("curl -fsS -m 3 -X POST -H \"Authorization: Bearer sb_test\""), "{cmd}");
-            assert!(cmd.ends_with("http://localhost:8191/api/hook || true"));
+            assert!(cmd.starts_with("in=$(cat); sid=$("), "{cmd}");
+            assert!(cmd.contains("curl -fsS -m 3 -X POST -H \"Authorization: Bearer sb_test\""), "{cmd}");
+            assert!(cmd.contains(&format!("http://localhost:8191/api/hook?event={ev}&session=$sid")), "{cmd}");
+            assert!(!cmd.contains("--data-binary"), "hook must not upload stdin: {cmd}");
+            assert!(cmd.ends_with("|| true"));
             assert_eq!(hooks["hooks"][ev][0]["hooks"][0]["type"], "command");
         }
         assert_eq!(s.agents_md.lines().count(), 3);

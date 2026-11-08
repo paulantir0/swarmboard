@@ -1,12 +1,15 @@
 //! Claude Code hook endpoint (/api/hook): delivers pings on the agent's next turn. OWNER: MCP subagent.
 //!
-//! Every hook runs `curl … --data-binary @- <api>/api/hook || true` with the hook's stdin JSON.
+//! Every hook runs `curl -X POST "<api>/api/hook?event=<Event>&session=<id>[&reason=<r>]" || true`.
+//! Only those query parameters are sent; the hook's stdin JSON stays on the machine. Older installs
+//! that POST the whole stdin JSON still work (event/session are read from the body as a fallback),
+//! and the body is never stored or logged.
 //! Responses are the hook JSON output for that event; anything unexpected yields `{}` so a hook
 //! never breaks the user's session.
 
 use axum::{
     body::Bytes,
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
@@ -27,7 +30,14 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/api/hook", post(hook))
 }
 
-async fn hook(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+#[derive(Debug, Default, serde::Deserialize)]
+struct HookQuery {
+    event: Option<String>,
+    session: Option<String>,
+    reason: Option<String>,
+}
+
+async fn hook(State(state): State<AppState>, Query(q): Query<HookQuery>, headers: HeaderMap, body: Bytes) -> Response {
     let Some(token) = bearer_token(&headers) else {
         return (StatusCode::UNAUTHORIZED, Json(json!({}))).into_response();
     };
@@ -39,10 +49,11 @@ async fn hook(State(state): State<AppState>, headers: HeaderMap, body: Bytes) ->
             return Json(json!({})).into_response();
         }
     };
-    let input: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-    let event = input.get("hook_event_name").and_then(Value::as_str).unwrap_or("");
-    let session_id = input.get("session_id").and_then(Value::as_str).map(str::trim).unwrap_or("");
-    let reason = input.get("reason").and_then(Value::as_str);
+    // Legacy installs send the whole hook JSON; read only the three fields we need from it.
+    let input: Value = if q.event.is_some() || body.is_empty() { Value::Null } else { serde_json::from_slice(&body).unwrap_or(Value::Null) };
+    let event = q.event.as_deref().or_else(|| input.get("hook_event_name").and_then(Value::as_str)).unwrap_or("");
+    let session_id = q.session.as_deref().or_else(|| input.get("session_id").and_then(Value::as_str)).map(str::trim).unwrap_or("");
+    let reason = q.reason.as_deref().filter(|r| !r.is_empty()).or_else(|| input.get("reason").and_then(Value::as_str));
     match respond_with(&state, &auth, event, session_id, reason).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => {
