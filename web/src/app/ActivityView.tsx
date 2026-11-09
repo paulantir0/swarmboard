@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api, type Activity, type PostStatus } from '../api'
 import { Ago } from '../components/Ago'
@@ -19,6 +19,7 @@ const PAGE = 200
 function useActivity(teamId: string) {
   const [events, setEvents] = useState<Activity[] | null>(null)
   const [error, setError] = useState('')
+  const [attempt, setAttempt] = useState(0)
   const last = useRef(0)
 
   useEffect(() => {
@@ -70,47 +71,68 @@ function useActivity(teamId: string) {
       alive = false
       window.clearInterval(timer)
     }
-  }, [teamId])
+  }, [teamId, attempt])
 
-  return { events, error }
+  return { events, error, retry: () => setAttempt((n) => n + 1) }
 }
 
 export function ActivityView() {
   const { teamId, base, me } = useShell()
-  const { events, error } = useActivity(teamId)
+  const { events, error, retry } = useActivity(teamId)
   const list = events ? [...events].reverse() : null
 
   return (
     <div className="view">
       <ViewHeader title="Activity" />
       <Loadable ready={Boolean(list) || Boolean(error)} label="Loading activity">
-      {!list ? (
-        error ? <Empty title="Could not load activity" hint={error} /> : <div className="empty" />
-      ) : list.length === 0 ? (
-        error ? <Empty title="Could not load activity" hint={error} /> : <Empty title="No activity yet" hint="Posts, claims, replies and pings from agents and people show up here as they happen." />
-      ) : (
-        <ActivityList events={list} base={base} meId={me.user.id} />
-      )}
+        {error && !list?.length ? (
+          <Empty
+            title="Could not load activity"
+            hint={error}
+            action={
+              <button className="btn btn-sm" onClick={retry}>
+                Retry
+              </button>
+            }
+          />
+        ) : list?.length ? (
+          <ActivityList events={list} base={base} meId={me.user.id} />
+        ) : (
+          <Empty title="No activity yet" hint="Posts, claims, replies and pings from agents and people show up here as they happen." />
+        )}
       </Loadable>
     </div>
   )
 }
 
+/** Agents reconnect often (every new session). Keep only the newest "connected" in a run where
+ * that agent did nothing else, so reconnects don't bury the work. Events are newest-first. */
+function collapseReconnects(events: Activity[]): Activity[] {
+  const lastWasConnect = new Map<string, boolean>()
+  return events.filter((ev) => {
+    const key = ev.actor?.agent_id ?? ev.actor?.user_id
+    if (!key) return true
+    const connect = ev.kind === 'agent_joined'
+    const skip = connect && lastWasConnect.get(key) === true
+    lastWasConnect.set(key, connect)
+    return !skip
+  })
+}
+
 /** Newest-first event feed. Events that arrive after the first render slide in once. */
-export function ActivityList({ events, base, meId }: { events: Activity[]; base: string; meId: string }) {
+export function ActivityList({ events: all, base, meId }: { events: Activity[]; base: string; meId: string }) {
+  const events = useMemo(() => collapseReconnects(all), [all])
   const isNew = useArrivals(events.map((e) => e.id))
   return (
-    <ul className="feed activity">
+    <ul className="feed">
       {events.map((ev) => (
         <li key={ev.id} className={`act ${isNew(ev.id) ? 'arrive' : ''}`}>
-          <span className="act-time mono muted">
-            <Ago ts={ev.at} />
-          </span>
+          <Ago ts={ev.at} className="act-time muted" />
           <span className="act-line">
             {ev.actor ? (
               <Who author={ev.actor} me={meId} />
             ) : person(ev.data?.by) ? (
-              <span className="who">{person(ev.data?.by)}</span>
+              <Handle name={person(ev.data?.by)!} />
             ) : (
               <span className="muted">someone</span>
             )}{' '}
@@ -145,7 +167,7 @@ function describe(ev: Activity, base: string): ReactNode {
   const d = ev.data ?? {}
   const post =
     ev.post_number != null ? (
-      <Link className="act-post" to={`${base}/p/${ev.post_number}`}>
+      <Link className="act-post" to={`${base}/p/${ev.post_number}`} title={ev.post_title ?? undefined}>
         <span className="mono">#{ev.post_number}</span>
         {ev.post_title ? (
           <span className="act-title">
@@ -162,7 +184,12 @@ function describe(ev: Activity, base: string): ReactNode {
   const leased = scope ? (
     <span className="act-scope" title={repo}>
       <span className="mono">{scope}</span>
-      {repo ? <span className="muted mono"> in {repo}</span> : null}
+      {repo ? (
+        <span className="muted">
+          {' '}
+          in <span className="mono">{repo}</span>
+        </span>
+      ) : null}
     </span>
   ) : (
     post
@@ -184,7 +211,12 @@ function describe(ev: Activity, base: string): ReactNode {
       return (
         <>
           {from ? 'took over' : 'claimed'} {leased}
-          {from ? <span className="muted"> from {from}</span> : null}
+          {from ? (
+            <span className="muted">
+              {' '}
+              from <Handle name={from} />
+            </span>
+          ) : null}
         </>
       )
     }
@@ -210,7 +242,7 @@ function describe(ev: Activity, base: string): ReactNode {
       const target = str(d.target) ?? str(d.to)
       return (
         <>
-          pinged {target ? <span className="mono">{target}</span> : null}
+          pinged {target ? <span className="mono act-target">{target}</span> : null}
           {post ? <> about {post}</> : null}
           <Excerpt text={str(d.excerpt)} />
         </>
@@ -227,25 +259,46 @@ function describe(ev: Activity, base: string): ReactNode {
       const role = str(d.role)
       return (
         <>
-          made {who ? <span className="mono">{who}</span> : 'someone'} {role === 'admin' ? 'an admin' : role === 'owner' ? 'the owner' : 'a member'}
+          made {who ? <Handle name={who} /> : 'someone'} {role === 'admin' ? 'an admin' : role === 'owner' ? 'the owner' : 'a member'}
         </>
       )
     }
     case 'ownership_transferred': {
       const to = person(d.to)
-      return <>transferred ownership{to ? <> to <span className="mono">{to}</span></> : null}</>
+      return <>transferred ownership{to ? <> to <Handle name={to} /></> : null}</>
     }
     case 'member_removed': {
       const who = person(d.user)
       const self = who && ev.actor && (who === ev.actor.handle || who === ev.actor.display)
-      return self ? <>left the team</> : <>removed {who ? <span className="mono">{who}</span> : 'a member'}</>
+      return self ? <>left the team</> : <>removed {who ? <Handle name={who} /> : 'a member'}</>
     }
-    case 'lease_force_released':
+    case 'lease_force_released': {
+      const holder = str(d.holder)
       return (
         <>
           force-released {leased}
+          {holder ? (
+            <span className="muted">
+              {' '}
+              from <Handle name={holder} />
+            </span>
+          ) : null}
         </>
       )
+    }
+    case 'org_created': {
+      const name = str(d.name)
+      return <>created the org{name ? <> {name}</> : null}</>
+    }
+    case 'org_renamed': {
+      // Carries only what changed: the name, the URL slug, or both.
+      const name = str(d.name)
+      const slug = str(d.slug)
+      const url = slug ? <span className="mono">/{slug}</span> : null
+      if (name && slug) return <>renamed the org to {name} at {url}</>
+      if (slug) return <>moved the org to {url}</>
+      return <>renamed the org{name ? <> to {name}</> : null}</>
+    }
     case 'agent_joined':
       return <>connected</>
     case 'invite_sent': {
@@ -261,6 +314,27 @@ function describe(ev: Activity, base: string): ReactNode {
   }
 }
 
+/** A person named only by handle ("mira", "paul/api-agent"): the identity style, no link. */
+function Handle({ name }: { name: string }) {
+  const slash = name.indexOf('/')
+  return (
+    <span className="who" title={name}>
+      {slash > 0 ? (
+        <>
+          <span className="who-handle">{name.slice(0, slash + 1)}</span>
+          <span className="who-agent">{name.slice(slash + 1)}</span>
+        </>
+      ) : (
+        <span className="who-handle-solo">{name}</span>
+      )}
+    </span>
+  )
+}
+
 function Excerpt({ text }: { text?: string }) {
-  return text ? <span className="act-excerpt">{text}</span> : null
+  return text ? (
+    <span className="act-excerpt" title={text}>
+      {text}
+    </span>
+  ) : null
 }

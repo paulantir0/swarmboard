@@ -3,8 +3,21 @@ import { api } from '../api'
 import { UploadList, useUploads } from '../components/MarkdownField'
 import { useShell } from './context'
 
-/** Send a ping: to "handle/agent", "agent", "@handle", "handle/*" or "@all". */
-export function PingForm({ initialTo = '', postNumber, onDone, autoFocus }: { initialTo?: string; postNumber?: number; onDone?: () => void; autoFocus?: boolean }) {
+/**
+ * Send a ping: to "handle/agent", "agent", "@handle", "handle/*" or "@all".
+ * With `onDone` the parent closes the form and shows the "Sent to …" summary it is handed.
+ */
+export function PingForm({
+  initialTo = '',
+  postNumber,
+  onDone,
+  autoFocus,
+}: {
+  initialTo?: string
+  postNumber?: number
+  onDone?: (summary: string) => void
+  autoFocus?: boolean
+}) {
   const { teamId, agents, me } = useShell()
   const [to, setTo] = useState(initialTo)
   const [body, setBody] = useState('')
@@ -40,10 +53,11 @@ export function PingForm({ initialTo = '', postNumber, onDone, autoFocus }: { in
       const n = post.trim() ? Number(post.trim().replace(/^#/, '')) : undefined
       const sent = await api.ping(teamId, to.trim(), body.trim(), Number.isFinite(n) ? n : undefined)
       setBody('')
-      setResult(sent.recipients.length ? `Sent to ${sent.recipients.join(', ')}` : 'Sent')
-      onDone?.()
+      const summary = sentSummary(sent.recipients)
+      if (onDone) onDone(summary)
+      else setResult(summary)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not send')
+      setError(err instanceof Error ? err.message : 'Could not send the ping. Check the address and try again.')
     } finally {
       setBusy(false)
     }
@@ -55,7 +69,10 @@ export function PingForm({ initialTo = '', postNumber, onDone, autoFocus }: { in
         <input
           className="field ping-to mono"
           list={listId}
-          placeholder="To"
+          name="to"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="To: owner/agent, @person or @all…"
           aria-label="To"
           value={to}
           autoFocus={autoFocus && !initialTo}
@@ -66,18 +83,32 @@ export function PingForm({ initialTo = '', postNumber, onDone, autoFocus }: { in
             <option key={t} value={t} />
           ))}
         </datalist>
-        <input className="field ping-post mono" placeholder="#" aria-label="Post number" inputMode="numeric" value={post} onChange={(e) => setPost(e.target.value)} />
+        <input
+          className="field ping-post mono"
+          name="post"
+          autoComplete="off"
+          placeholder="Post #"
+          aria-label="About post number (optional)"
+          inputMode="numeric"
+          value={post}
+          onChange={(e) => setPost(e.target.value)}
+        />
       </div>
       <div className="ping-fields">
         <input
           ref={msgRef}
           className={`field ping-msg ${dragging ? 'dragging' : ''}`}
+          name="message"
+          autoComplete="off"
           placeholder="Message"
           aria-label="Message"
           value={body}
           autoFocus={autoFocus && Boolean(initialTo)}
           maxLength={2000}
-          onChange={(e) => setBody(e.target.value)}
+          onChange={(e) => {
+            setBody(e.target.value)
+            setResult('')
+          }}
           onPaste={uploads.onPaste}
           onDragOver={(e) => {
             if (!e.dataTransfer.types.includes('Files')) return
@@ -95,14 +126,25 @@ export function PingForm({ initialTo = '', postNumber, onDone, autoFocus }: { in
           }}
         />
         <button className="btn btn-primary" type="submit" disabled={busy || uploads.busy || !to.trim() || !body.trim()}>
-          Send
+          {busy ? 'Sending…' : 'Send ping'}
         </button>
       </div>
       <UploadList items={uploads.items} onDismiss={uploads.dismiss} />
-      {result ? <p className="ping-result muted">{result}</p> : null}
-      {error ? <p className="error-text">{error}</p> : null}
+      <p className="ping-result" role="status">
+        {result}
+      </p>
+      {error ? (
+        <p className="error-text" role="alert">
+          {error}
+        </p>
+      ) : null}
     </form>
   )
+}
+
+/** "Sent to paul/api-agent, mira/infra-agent" */
+function sentSummary(recipients: string[]): string {
+  return recipients.length ? `Sent to ${recipients.join(', ')}` : 'Sent'
 }
 
 /** The address someone would use to ping this author back. */

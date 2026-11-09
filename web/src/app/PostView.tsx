@@ -7,7 +7,7 @@ import { Empty } from '../components/Empty'
 import { Icon } from '../components/Icon'
 import { Loadable } from '../components/Loader'
 import { Markdown } from '../components/Markdown'
-import { MarkdownField } from '../components/MarkdownField'
+import { MarkdownField, SUBMIT_SHORTCUT, SubmitKey } from '../components/MarkdownField'
 import { PriorityIcon, StatusIcon, Who } from '../components/Marks'
 import { Select } from '../components/Select'
 import { Title } from '../components/Title'
@@ -16,8 +16,6 @@ import { usePoll } from '../lib/usePoll'
 import { useShell } from './context'
 import { Claim, KindTag } from './PostList'
 import { ViewHeader } from './ViewHeader'
-
-const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
 
 export function PostView() {
   const { teamId, base, boards, me, refreshBoards } = useShell()
@@ -46,7 +44,7 @@ export function PostView() {
       applyPost(await fn())
       void refreshBoards()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong')
+      setError(err instanceof Error ? err.message : 'Could not update the post. Try again.')
     } finally {
       setBusy(false)
     }
@@ -74,9 +72,17 @@ export function PostView() {
   }
 
   const saveEdit = async () => {
-    if (!title.trim() || bodyUploading) return
-    await patch({ title: title.trim(), body })
-    setEditing(false)
+    if (!title.trim() || busy || bodyUploading) return
+    setBusy(true)
+    setError('')
+    try {
+      applyPost(await api.updatePost(teamId, number, { title: title.trim(), body }))
+      setEditing(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save the post. Try again.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   const sendComment = async () => {
@@ -89,7 +95,7 @@ export function PostView() {
       setComment('')
       detail.setData((prev) => (prev ? { post: { ...prev.post, comment_count: prev.post.comment_count + 1 }, comments: [...prev.comments, c] } : prev!))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not reply')
+      setError(err instanceof Error ? err.message : 'Could not send the reply. Try again.')
     } finally {
       setBusy(false)
     }
@@ -105,15 +111,21 @@ export function PostView() {
     return (
       <div className="view">
         <ViewHeader title={<span className="mono">#{n}</span>} back={back} />
-        <Loadable ready={Boolean(detail.error)} label={`Loading #${n}`}>
+        <Loadable ready={Boolean(detail.error)} label={`Loading #${n}…`}>
           {detail.error ? (
             <Empty
-              title={`Could not open #${n}`}
-              hint={detail.error.message}
+              title={detail.error instanceof ApiError && detail.error.status === 404 ? `There is no post #${n}` : `Could not open #${n}`}
+              hint={detail.error instanceof ApiError && detail.error.status === 404 ? 'It may have been deleted, or the link is wrong.' : detail.error.message}
               action={
-                <Link className="btn btn-sm" to={base}>
-                  All posts
-                </Link>
+                detail.error instanceof ApiError && detail.error.status === 404 ? (
+                  <Link className="btn btn-sm" to={base}>
+                    All posts
+                  </Link>
+                ) : (
+                  <button className="btn btn-sm" onClick={() => void detail.reload()}>
+                    Retry
+                  </button>
+                )
               }
             />
           ) : (
@@ -142,7 +154,7 @@ export function PostView() {
         }
       >
         {!editing ? (
-          <button className="btn btn-ghost btn-sm" onClick={startEdit}>
+          <button className="btn btn-ghost btn-sm" onClick={startEdit} title="Edit the title and description">
             <Icon name="pencil" size={14} />
             Edit
           </button>
@@ -150,31 +162,53 @@ export function PostView() {
       </ViewHeader>
 
       {/* Same position as the loading branch's Loadable, so its loader crossfades into the post. */}
-      <Loadable ready label={`Loading #${n}`}>
+      <Loadable ready label={`Loading #${n}…`}>
       <div className="detail">
         <article className="detail-main">
           {editing ? (
             <div className="edit-form">
-              <input className="field field-title" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Title" autoFocus />
+              <input
+                className="field field-title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setEditing(false)
+                  else if (e.key === 'Enter' && !e.nativeEvent.isComposing) void saveEdit()
+                }}
+                aria-label="Title"
+                maxLength={200}
+                autoComplete="off"
+                autoFocus
+              />
               <MarkdownField
                 teamId={teamId}
                 value={body}
                 onChange={setBody}
                 rows={12}
                 onSubmit={saveEdit}
+                onCancel={() => setEditing(false)}
+                placeholder="Details"
                 dropTarget={2}
                 onBusyChange={setBodyUploading}
                 actions={
                   <>
-                    <button className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>
                       Cancel
                     </button>
-                    <button className="btn btn-primary btn-sm" onClick={saveEdit} disabled={busy || bodyUploading || !title.trim()}>
-                      Save
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={saveEdit}
+                      disabled={busy || bodyUploading || !title.trim()}
+                      aria-keyshortcuts={SUBMIT_SHORTCUT}
+                    >
+                      {busy ? 'Saving…' : 'Save'}
+                      <SubmitKey />
                     </button>
                   </>
                 }
               />
+              {error ? <p className="error-text">{error}</p> : null}
             </div>
           ) : (
             <>
@@ -184,7 +218,7 @@ export function PostView() {
               <div className="detail-meta">
                 <KindTag kind={post.kind} />
                 <Who author={post.author} me={meId} />
-                <Ago ts={post.created_at} className="muted mono" />
+                <Ago ts={post.created_at} className="muted" />
               </div>
               {post.body.trim() ? <Markdown source={post.body} className="detail-body" /> : null}
             </>
@@ -192,7 +226,7 @@ export function PostView() {
 
           <section className="thread" aria-label="Replies">
             <h3 className="section-title">
-              Replies <span className="mono muted">{comments.length}</span>
+              Replies <span className="section-count">{comments.length}</span>
             </h3>
             {comments.length ? (
               <ol className="thread-list">
@@ -200,7 +234,7 @@ export function PostView() {
                   <li className="reply" key={c.id}>
                     <div className="reply-head">
                       <Who author={c.author} me={meId} />
-                      <Ago ts={c.created_at} className="muted mono" />
+                      <Ago ts={c.created_at} className="muted" />
                     </div>
                     <Markdown source={c.body} className="reply-body" />
                   </li>
@@ -213,64 +247,83 @@ export function PostView() {
                 value={comment}
                 onChange={setComment}
                 onSubmit={sendComment}
-                placeholder="Reply"
-                rows={3}
+                placeholder="Write a reply…"
+                label="Reply"
+                hideLabel
+                id="reply"
+                rows={2}
+                grow
                 dropTarget={1}
                 onBusyChange={setCommentUploading}
                 actions={
-                  <>
-                    <span className="kbd-hint" title={`${MOD_KEY} + Enter`}>
-                      <span className="kbd">{MOD_KEY}</span>
-                      <span className="kbd">↵</span>
-                    </span>
-                    <button className="btn btn-primary btn-sm" onClick={sendComment} disabled={busy || commentUploading || !comment.trim()}>
-                      Reply
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={sendComment}
+                    disabled={busy || commentUploading || !comment.trim()}
+                    aria-keyshortcuts={SUBMIT_SHORTCUT}
+                  >
+                    Reply
+                    <SubmitKey />
+                  </button>
                 }
               />
+              {error && !editing ? <p className="error-text reply-error">{error}</p> : null}
             </div>
           </section>
         </article>
 
         <aside className="props" aria-label="Properties">
-          <div className="prop prop-claim">
-            <span className="prop-label">Claim</span>
-            <div className="prop-value claim-box">
-              {claimer ? (
-                <>
+          <div className="prop-claim">
+            <div className="prop">
+              <span className="prop-label">Claim</span>
+              <span className="prop-value claim-value">
+                {claimer ? (
                   <Claim author={claimer} meId={meId} />
-                  {post.claimed_at ? <Ago ts={post.claimed_at} prefix="since" className="claim-since muted mono" /> : null}
-                  <div className="claim-actions">
-                    {mine ? (
-                      <>
-                        <button className="btn btn-xs" disabled={busy} onClick={() => release()}>
-                          Release
-                        </button>
-                        <button className="btn btn-xs" disabled={busy} onClick={() => release('done')}>
-                          Done
-                        </button>
-                      </>
-                    ) : (
-                      <ConfirmButton
-                        className="btn btn-xs"
-                        disabled={busy}
-                        question={`Take over from ${claimer.display}?`}
-                        confirmLabel="Take over"
-                        onConfirm={() => claim(true)}
-                      >
-                        Take over
-                      </ConfirmButton>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <button className="btn btn-xs claim-btn" disabled={busy} onClick={() => claim(false)}>
-                  <Icon name="lock" size={12} />
-                  Claim
-                </button>
-              )}
+                ) : (
+                  <button className="btn btn-xs claim-btn" disabled={busy} onClick={() => claim(false)}>
+                    <Icon name="lock" size={12} />
+                    Claim
+                  </button>
+                )}
+              </span>
             </div>
+            {claimer && post.claimed_at ? (
+              <div className="prop prop-since">
+                <span className="prop-label">Since</span>
+                <span className="prop-value prop-static">
+                  <Icon name="clock" size={14} />
+                  <Ago ts={post.claimed_at} />
+                </span>
+              </div>
+            ) : null}
+            {claimer ? (
+              <div className="prop">
+                <span className="prop-label" aria-hidden="true" />
+                <span className="prop-value claim-actions">
+                  {mine ? (
+                    <>
+                      <button className="btn btn-xs" disabled={busy} onClick={() => release('done')}>
+                        Mark done
+                      </button>
+                      <button className="btn btn-xs" disabled={busy} onClick={() => release()}>
+                        Release
+                      </button>
+                    </>
+                  ) : (
+                    <ConfirmButton
+                      className="btn btn-xs"
+                      disabled={busy}
+                      question={`Take over from ${claimer.display}?`}
+                      confirmLabel="Take over"
+                      onConfirm={() => claim(true)}
+                    >
+                      Take over
+                    </ConfirmButton>
+                  )}
+                </span>
+              </div>
+            ) : null}
           </div>
 
           <PropSelect
@@ -309,10 +362,14 @@ export function PostView() {
             <span className="prop-label">Updated</span>
             <span className="prop-value prop-static">
               <Icon name="clock" size={14} />
-              <Ago ts={post.updated_at} className="mono" />
+              <Ago ts={post.updated_at} />
             </span>
           </div>
-          {error ? <p className="error-text prop-error">{error}</p> : null}
+          {error && !editing ? (
+            <p className="error-text prop-error" role="alert">
+              {error}
+            </p>
+          ) : null}
         </aside>
       </div>
       </Loadable>

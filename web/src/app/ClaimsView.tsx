@@ -13,7 +13,6 @@ import { ViewHeader } from './ViewHeader'
 
 const EMPTY: Claims = { leases: [], queue: [] }
 
-
 function byRepo(leases: Lease[]): [string, Lease[]][] {
   const groups = new Map<string, Lease[]>()
   for (const l of leases) {
@@ -43,7 +42,7 @@ export function ClaimsView() {
       await api.releaseClaim(teamId, l.scope, l.repo)
       await claims.reload()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not release')
+      setError(`Could not release ${l.scope}: ${err instanceof Error ? err.message : 'the server did not respond'}. Try again.`)
     } finally {
       setBusy('')
     }
@@ -59,93 +58,120 @@ export function ClaimsView() {
       <ViewHeader
         title={
           <>
-            Claims <span className="view-count mono">{leases.length ? `${leases.length} held` : ''}</span>
+            Claims {leases.length ? <span className="view-count">{leases.length} held</span> : null}
           </>
         }
       />
-      {error ? <p className="error-text claims-error">{error}</p> : null}
+      {error ? (
+        <p className="error-text claims-error" role="alert">
+          {error}
+        </p>
+      ) : null}
       <Loadable ready={Boolean(data) || Boolean(claims.error)} label="Loading claims">
-      {!data ? (
-        claims.error ? <Empty title="Could not load claims" hint={claims.error.message} /> : <div className="empty" />
-      ) : leases.length === 0 && queue.length === 0 ? (
-        <Empty title="Nothing claimed" hint="Agents claim files, resources and tasks before they touch them. Their leases show up here." />
-      ) : (
-        <div className={`claims ${canRelease ? 'can-release' : ''}`}>
-          {byRepo(leases).map(([repo, list]) => (
-            <section key={repo || '-'} aria-label={repo || 'Team-wide'}>
-              <h2 className="claims-head">
-                <Icon name={repo ? 'folder' : 'users'} size={14} />
-                <span className={repo ? 'mono claims-repo' : ''}>{repo || 'Team-wide'}</span>
-                <span className="group-count mono">{list.length}</span>
-              </h2>
-              {list.map((l) => (
-                <div key={`${l.repo}:${l.scope}`} className={`claim-row ${asking === `${l.repo}:${l.scope}` ? 'asking' : ''}`}>
-                  <span className="cl-scope mono" title={l.kind ? `${l.kind}: ${l.scope}` : l.scope}>
-                    {l.scope}
-                  </span>
-                  <span className="cl-who">
-                    <Claim author={l.holder} meId={me.user.id} />
-                  </span>
-                  <span className="cl-note">{l.note || <span className="muted">No note</span>}</span>
-                  <span className="cl-time mono muted">
-                    <Until ts={l.expires_at} prefix="expires" />
-                  </span>
-                  {canRelease ? (
-                    <span className="cl-act">
-                      <button
-                        className="btn btn-xs"
-                        disabled={busy === `${l.repo}:${l.scope}` || asking === `${l.repo}:${l.scope}`}
-                        onClick={() => setAsking(`${l.repo}:${l.scope}`)}
-                      >
-                        Release
-                      </button>
+        {!data ? (
+          <Empty
+            title="Could not load claims"
+            hint={claims.error?.message}
+            action={
+              <button className="btn btn-sm" onClick={() => void claims.reload()}>
+                Retry
+              </button>
+            }
+          />
+        ) : leases.length === 0 && queue.length === 0 ? (
+          <Empty title="Nothing claimed" hint="Agents claim files, resources and tasks before they touch them. Their leases show up here." />
+        ) : (
+          <div className={`claims ${canRelease ? 'can-release' : ''}`}>
+            {byRepo(leases).map(([repo, list]) => (
+              <section key={repo || '-'} aria-label={repo || 'Team-wide'}>
+                <h2 className="claims-head">
+                  <Icon name={repo ? 'folder' : 'users'} size={14} />
+                  {repo ? (
+                    <span className="mono claims-repo" title={repo}>
+                      {repo}
                     </span>
-                  ) : null}
-                  {asking === `${l.repo}:${l.scope}` ? (
-                    <Confirm
-                      className="cl-confirm"
-                      question={
-                        <>
-                          Release <span className="mono">{l.scope}</span> held by {l.holder.display}?
-                        </>
-                      }
-                      confirmLabel="Release"
-                      danger
-                      onConfirm={() => void release(l)}
-                      onCancel={() => setAsking('')}
-                    />
-                  ) : null}
-                </div>
-              ))}
-            </section>
-          ))}
-          {queue.length ? (
-            <section aria-label="Queue">
-              <h2 className="claims-head">
-                <Icon name="clock" size={14} />
-                <span>Queue</span>
-                <span className="group-count mono">{queue.length}</span>
-              </h2>
-              {queue.map((w) => (
-                <div key={`${w.repo}:${w.scope}:${w.position}:${w.waiter.display}`} className="claim-row">
-                  <span className="cl-scope mono" title={w.repo || 'Team-wide'}>
-                    <span className="cl-pos">{w.position}</span>
-                    {w.scope}
-                  </span>
-                  <span className="cl-who">
-                    <Who author={w.waiter} me={me.user.id} />
-                  </span>
-                  <span className="cl-note mono muted">{w.repo || 'team-wide'}</span>
-                  <span className="cl-time mono muted">
-                    <Ago ts={w.created_at} prefix="waiting" />
-                  </span>
-                  {canRelease ? <span className="cl-act" /> : null}
-                </div>
-              ))}
-            </section>
-          ) : null}
-        </div>
-      )}
+                  ) : (
+                    <span>Team-wide</span>
+                  )}
+                  <span className="group-count">{list.length}</span>
+                </h2>
+                {list.map((l) => {
+                  const key = `${l.repo}:${l.scope}`
+                  return (
+                    <div key={key} className={`claim-row ${asking === key ? 'asking' : ''}`}>
+                      <span className="cl-scope" title={l.kind ? `${l.kind}: ${l.scope}` : l.scope}>
+                        <span className="mono">{l.scope}</span>
+                      </span>
+                      <span className="cl-who">
+                        <Claim author={l.holder} meId={me.user.id} />
+                      </span>
+                      <span className="cl-note" title={l.note || undefined}>
+                        {l.note}
+                      </span>
+                      <Until ts={l.expires_at} prefix="expires" className="cl-time muted" />
+                      {canRelease ? (
+                        <span className="cl-act">
+                          <button
+                            className="btn btn-quiet-danger btn-sm"
+                            disabled={busy === key || asking === key}
+                            onClick={() => setAsking(key)}
+                          >
+                            {busy === key ? 'Releasing…' : 'Release'}
+                          </button>
+                        </span>
+                      ) : null}
+                      {asking === key ? (
+                        <Confirm
+                          className="cl-confirm"
+                          question={
+                            <>
+                              Release <span className="mono">{l.scope}</span> held by <Who author={l.holder} me={me.user.id} />?
+                            </>
+                          }
+                          confirmLabel="Release"
+                          danger
+                          onConfirm={() => void release(l)}
+                          onCancel={() => setAsking('')}
+                        />
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </section>
+            ))}
+            {queue.length ? (
+              <section aria-label="Queue">
+                <h2 className="claims-head">
+                  <Icon name="clock" size={14} />
+                  <span>Queue</span>
+                  <span className="group-count">{queue.length}</span>
+                </h2>
+                {queue.map((w) => (
+                  <div key={`${w.repo}:${w.scope}:${w.position}:${w.waiter.display}`} className="claim-row">
+                    <span className="cl-scope" title={`${w.scope}: position ${w.position} in line`}>
+                      <span className="cl-pos">{w.position}</span>
+                      <span className="mono">{w.scope}</span>
+                    </span>
+                    <span className="cl-who">
+                      <Who author={w.waiter} me={me.user.id} />
+                    </span>
+                    <span className="cl-note">
+                      {w.repo ? (
+                        <span className="mono muted" title={w.repo}>
+                          {w.repo}
+                        </span>
+                      ) : (
+                        <span className="muted">team-wide</span>
+                      )}
+                    </span>
+                    <Ago ts={w.created_at} prefix="queued" className="cl-time muted" />
+                    {canRelease ? <span className="cl-act" /> : null}
+                  </div>
+                ))}
+              </section>
+            ) : null}
+          </div>
+        )}
       </Loadable>
     </div>
   )

@@ -69,10 +69,14 @@ body.no-scroll {
   font-size: clamp(30px, 4.2vw, 40px);
 }
 
-/* All landing copy is set in Swarm Mono. */
+/* All landing copy is set in Swarm Mono, the form and the GitHub link included: one voice. */
 .landing-title,
 .landing-sub,
-.landing-body {
+.landing-body,
+.landing-gh,
+.landing-sent,
+.landing .field-hero,
+.landing .btn-hero {
   font-family: var(--font-mono);
 }
 
@@ -119,6 +123,7 @@ body.no-scroll {
   height: var(--control-height-comfortable);
   padding: 0 var(--space-5);
   font-size: var(--text-md);
+  font-weight: 600;
 }
 
 .landing-sent {
@@ -241,11 +246,6 @@ body.no-scroll {
     top: 22px;
   }
 
-  .plain-page {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
-
   .btn-hero {
     padding: 0 var(--space-4);
   }
@@ -277,46 +277,4 @@ body.no-scroll {
   .landing-body {
     display: none;
   }
-}
-
-/* Auth + join: same paper, no stream */
-.plain-page {
-  min-height: 100dvh;
-  display: flex;
-  align-items: flex-start;
-  padding: clamp(72px, 22dvh, 240px) clamp(16px, 8vw, 128px) var(--space-12);
-}
-
-.plain-block {
-  width: 100%;
-  max-width: 440px;
-}
-
-.wordmark-sm {
-  display: inline-flex;
-  margin-bottom: var(--space-8);
-  color: var(--color-ink);
-  font-size: 24px;
-  text-decoration: none;
-}
-
-.wordmark-sm:hover {
-  color: var(--color-ink);
-}
-
-.plain-text {
-  margin-bottom: var(--space-4);
-  font-size: var(--text-lg);
-  line-height: 24px;
-}
-
-.join-title {
-  font-size: var(--text-2xl);
-  line-height: 32px;
-  font-weight: 500;
-}
-
-.join-meta {
-  margin: var(--space-1) 0 var(--space-6);
-  font-size: var(--text-sm);
 }

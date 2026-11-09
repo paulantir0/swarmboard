@@ -10,20 +10,13 @@ import { usePoll } from '../lib/usePoll'
 import { PROMPT_KEY } from './Connect'
 import { ShellContext, type ShellCtx } from './context'
 import { JoinForm } from './JoinForm'
+import { NotMember } from './NotMember'
+import { RESERVED_SLUGS } from '../lib/org'
+import { setTitle } from '../lib/title'
 import { Count, RouteView, TNavLink, reducedMotion, useArrivals } from './motion'
 import '../styles/app.css'
 
 const LAST_TEAM = 'sb:last-team'
-
-/** Top-level paths an org slug can never take (mirrors the server's RESERVED_SLUGS). */
-export const RESERVED_SLUGS = new Set(
-  'app api auth join new orgs org f u p mcp healthz assets brand fonts crew login logout signup settings admin www docs help about terms privacy static invite connect github slug'.split(
-    ' ',
-  ),
-)
-
-/** "swarmboard.app" in production, "localhost:5191" locally. */
-export const HOST = typeof window !== 'undefined' ? window.location.host : 'swarmboard.app'
 
 function readLastTeam(): string | null {
   try {
@@ -161,6 +154,32 @@ export function Shell() {
   const unread = usePoll(() => api.inbox(teamId), [teamId], undefined, ready)
   const agents = usePoll(() => api.agents(teamId), [teamId], 10_000, ready)
 
+  // Tab title from the route: "#4 · Acme", "(2) Inbox · Acme", "#auth · Acme".
+  const unreadCount = unread.data?.length ?? 0
+  const agentList = agents.data
+  useEffect(() => {
+    if (!team) return
+    const rest = location.pathname.slice(slug.length + 1).replace(/^\/|\/$/g, '')
+    const [section = '', id] = rest.split('/')
+    const board = new URLSearchParams(location.search).get('board')
+    const named: Record<string, string> = {
+      inbox: 'Inbox',
+      claims: 'Claims',
+      activity: 'Activity',
+      connect: 'Connect',
+      team: 'Team',
+      'new-post': 'New post',
+      members: 'Profile',
+    }
+    let label: string
+    if (!section) label = board ? `#${board}` : 'All posts'
+    else if (section === 'p' && id) label = `#${id}`
+    else if (section === 'agents') label = id ? (agentList?.find((a) => a.id === id)?.name ?? 'Agent') : 'Agents'
+    else label = named[section] ?? ''
+    if (section === 'inbox' && unreadCount) label = `(${unreadCount}) ${label}`
+    setTitle(label, team.name)
+  }, [team, slug, location.pathname, location.search, unreadCount, agentList])
+
   const base = `/${slug}`
 
   // Keyboard: c = new post (when not typing), in the topic you're looking at.
@@ -226,39 +245,6 @@ export function Shell() {
         </main>
       </div>
     </ShellContext.Provider>
-  )
-}
-
-/** /<slug> you can't see: paste an invite, or go to one of yours. */
-function NotMember({ slug, me, refreshMe }: { slug: string; me: Me; refreshMe: () => Promise<void> }) {
-  return (
-    <main className="solo">
-      <div className="solo-card">
-        <Link to="/" className="solo-brand" aria-label="swarmboard">
-          <Wordmark />
-        </Link>
-        <h1 className="solo-title">Not a member</h1>
-        <p className="solo-url mono">
-          {HOST}/{slug}
-        </p>
-        <div className="solo-section">
-          <span className="label">Invite link</span>
-          <JoinForm refreshMe={refreshMe} autoFocus />
-        </div>
-        <div className="solo-links">
-          {me.teams.map((t) => (
-            <Link key={t.id} className="solo-org" to={`/${t.slug}`}>
-              <span>{t.name}</span>
-              <span className="mono muted">/{t.slug}</span>
-            </Link>
-          ))}
-          <Link className="btn btn-ghost btn-sm solo-create" to="/new">
-            <Icon name="plus" size={14} />
-            Create org
-          </Link>
-        </div>
-      </div>
-    </main>
   )
 }
 
@@ -437,7 +423,7 @@ function Sidebar({ ctx, onClose }: { ctx: ShellCtx; onClose: () => void }) {
                 </button>
               )}
               <div className="menu-sep" />
-              <div className="menu-meta mono">{me.user.email}</div>
+              <div className="menu-meta">{me.user.email}</div>
               <button role="menuitem" className="menu-item" onClick={signOut}>
                 <span className="menu-label">Sign out</span>
                 <Icon name="logOut" size={14} />

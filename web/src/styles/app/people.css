@@ -1,0 +1,833 @@
+/* Agents: one grid, every row a subgrid, so columns hug their content across rows */
+.agents-table {
+  display: grid;
+  grid-template-columns: fit-content(340px) minmax(0, 1fr) fit-content(280px) max-content max-content;
+  column-gap: var(--space-4);
+}
+
+.thead,
+.trow {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  padding: 0 var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.thead {
+  height: var(--control-height-small);
+  background: var(--color-surface);
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+}
+
+.trow {
+  min-height: 48px;
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.trow.inactive .who-agent {
+  color: var(--color-ink-muted);
+}
+
+.a-who {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.live-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-border-strong);
+}
+
+.live-dot.on {
+  background: var(--color-success);
+}
+
+.a-working {
+  min-width: 0;
+  color: var(--color-ink-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.a-claimed {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+}
+
+.a-scope {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-ink-secondary);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.post-ref:hover {
+  color: var(--color-brand-action);
+}
+
+.a-seen,
+.a-seen-h {
+  text-align: right;
+}
+
+.a-seen {
+  font-size: var(--text-xs);
+}
+
+.a-act {
+  display: flex;
+  justify-content: flex-end;
+  margin-right: calc(var(--space-2) * -1);
+}
+
+.trow-extra {
+  grid-column: 1 / -1;
+  padding: var(--space-1) var(--space-6) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+/* Feeds (inbox, activity) */
+.feed {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.panel {
+  padding: var(--space-3) var(--space-6) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+/* Inbox: a gutter for the unread dot, the message at the prose measure, the time at the right edge */
+.ping {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  column-gap: var(--space-2);
+  padding: var(--space-3) var(--space-6) var(--space-2) var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.ping > :not(.ping-dot) {
+  grid-column: 2;
+}
+
+.ping-dot {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.ping.unread .ping-dot {
+  background: var(--color-brand-action);
+}
+
+.ping.unread .ping-head .who-agent,
+.ping.unread .ping-head .who-handle-solo {
+  font-weight: 600;
+}
+
+.ping-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+  min-height: 20px;
+  font-size: var(--text-xs);
+}
+
+.ping-target {
+  color: var(--color-ink-muted);
+}
+
+.ping-target .mono,
+.ping-post-link {
+  font-size: var(--text-xs);
+}
+
+.ping-post-link {
+  color: var(--color-ink-secondary);
+}
+
+.ping-post-link:hover {
+  color: var(--color-brand-action);
+}
+
+.ping-time {
+  margin-left: auto;
+}
+
+.ping-body {
+  max-width: var(--measure);
+  margin-top: var(--space-1);
+  font-size: var(--text-md);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.md.ping-body p {
+  margin-bottom: var(--space-1);
+}
+
+.ping-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  margin-left: -10px;
+}
+
+.ping-sent,
+.profile-sent,
+.ping-result {
+  font-size: var(--text-xs);
+}
+
+.ping-result {
+  color: var(--color-ink-muted);
+}
+
+/* An empty live region keeps its place in the DOM but takes no space in the form's gap. */
+.ping-result:empty {
+  margin-top: calc(var(--space-2) * -1);
+}
+
+.ping-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: var(--measure);
+  margin-top: var(--space-2);
+}
+
+.ping-fields {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.ping-to,
+.ping-msg {
+  flex: 1 1 auto;
+}
+
+.ping-post,
+.ping-fields .btn-primary {
+  flex: none;
+  width: 96px;
+}
+
+.ping-to::placeholder,
+.ping-post::placeholder {
+  font-family: var(--font-sans);
+}
+
+.field.ping-msg.dragging {
+  border-color: var(--field-border-focus);
+  background: var(--color-selection);
+}
+
+/* Activity: a time column, then one line per event; quotes stop at the prose measure */
+.act {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  column-gap: var(--space-4);
+  align-items: baseline;
+  min-height: var(--row-height);
+  padding: var(--space-2) var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-sm);
+  line-height: 20px;
+}
+
+.act-time {
+  font-size: var(--text-xs);
+}
+
+/* One line per event (long titles truncate; the full title is in the tooltip), the quote below it. */
+.act-line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.act-post {
+  color: var(--color-ink);
+}
+
+.act-post .mono {
+  color: var(--color-ink-muted);
+}
+
+.act-post:hover,
+.act-post:hover .mono {
+  color: var(--color-brand-action);
+}
+
+.act-scope .mono,
+.act-target {
+  font-size: var(--text-xs);
+}
+
+.act-scope > .mono:first-child {
+  color: var(--color-ink);
+}
+
+.act-excerpt {
+  display: block;
+  max-width: var(--measure);
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--color-ink-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Claims: leases by repo, queue below */
+.claims {
+  flex: 1 1 auto;
+}
+
+.claims-error {
+  padding: var(--space-2) var(--space-6);
+}
+
+.claims-head {
+  position: sticky;
+  top: var(--topbar-height);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--row-height);
+  padding: 0 var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.claims-head > svg {
+  flex: none;
+  color: var(--color-ink-muted);
+}
+
+.claims-repo {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-xs);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claim-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.6fr) 136px;
+  column-gap: var(--space-4);
+  align-items: center;
+  min-height: 40px;
+  padding: var(--space-1) var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-sm);
+  line-height: 20px;
+}
+
+.claims.can-release .claim-row {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.6fr) 136px 72px;
+}
+
+.cl-scope {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.cl-scope .mono {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-ink);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cl-pos {
+  flex: none;
+  min-width: 2ch;
+  margin-right: var(--space-2);
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.cl-who {
+  display: flex;
+  min-width: 0;
+}
+
+.cl-note {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-ink-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cl-note .mono {
+  font-size: var(--text-xs);
+}
+
+.cl-time {
+  font-size: var(--text-xs);
+  text-align: right;
+}
+
+.cl-act {
+  display: flex;
+  justify-content: flex-end;
+  margin-right: calc(var(--space-2) * -1);
+}
+
+.cl-confirm,
+.hold-confirm {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  padding: var(--space-1) 0;
+}
+
+
+/* Profiles (agents, members): a .page column; .page spaces the sections */
+.profile-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.profile-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-2);
+  font-size: var(--text-xl);
+  font-weight: 400;
+  line-height: 28px;
+  overflow-wrap: anywhere;
+}
+
+.profile-you {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+}
+
+.profile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+  color: var(--color-ink-secondary);
+  font-size: var(--text-xs);
+}
+
+.profile-meta .sep {
+  flex: none;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--color-border-strong);
+}
+
+.profile-repo,
+.profile-email {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.profile-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+  line-height: 20px;
+}
+
+.profile-stat-n {
+  color: var(--color-ink);
+  font-size: var(--text-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-status {
+  max-width: var(--measure);
+  color: var(--color-ink);
+  font-size: var(--text-md);
+  line-height: 1.55;
+}
+
+.profile-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+}
+
+.profile-head .ping-form {
+  margin-top: 0;
+}
+
+/* Holding / waiting: the same columns in both lists, so scope, note, time and action line up */
+.holds {
+  border-top: 1px solid var(--color-border);
+}
+
+.hold-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 128px;
+  column-gap: var(--space-4);
+  align-items: center;
+  min-height: 40px;
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-sm);
+}
+
+.holds.can-release .hold-row {
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 128px 64px;
+}
+
+.hold-scope {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.hold-scope-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-ink);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+}
+
+.hold-repo {
+  flex: none;
+  color: var(--color-ink-muted);
+  font-size: 11px;
+}
+
+.hold-note {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-ink-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hold-time {
+  font-size: var(--text-xs);
+  text-align: right;
+}
+
+.hold-act {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tabs {
+  display: flex;
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-height-small);
+  margin-bottom: -1px;
+  padding: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--motion-transition-control);
+}
+
+.tab:hover {
+  color: var(--color-ink);
+}
+
+.tab.on {
+  border-bottom-color: var(--color-ink);
+  color: var(--color-ink);
+}
+
+.profile .act,
+.profile .list .row {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.agent-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-2);
+}
+
+.agent-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  color: var(--color-ink);
+  transition: var(--motion-transition-control);
+}
+
+.agent-card:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-hover);
+  color: var(--color-ink);
+}
+
+.agent-card.inactive .agent-card-name {
+  color: var(--color-ink-muted);
+}
+
+.agent-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.agent-card-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-card-head .tag {
+  margin-left: auto;
+}
+
+.agent-card-status {
+  display: -webkit-box;
+  min-height: 36px;
+  overflow: hidden;
+  color: var(--color-ink-secondary);
+  font-size: var(--text-sm);
+  line-height: 18px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.agent-card-foot {
+  overflow: hidden;
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-card-foot .mono {
+  font-size: 11px;
+}
+
+/* Responsive */
+@media (max-width: 860px) {
+  .agents-table {
+    display: block;
+  }
+
+  .thead {
+    display: none;
+  }
+
+  .trow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'who act'
+      'working working'
+      'claimed seen';
+    gap: var(--space-1) var(--space-3);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .a-who {
+    grid-area: who;
+  }
+
+  .a-act {
+    grid-area: act;
+  }
+
+  .a-working {
+    grid-area: working;
+  }
+
+  .a-claimed {
+    grid-area: claimed;
+  }
+
+  .a-seen {
+    grid-area: seen;
+    align-self: end;
+  }
+
+  .trow-extra,
+  .panel {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+
+  .ping {
+    column-gap: var(--space-1);
+    padding: var(--space-3) var(--space-4) var(--space-2) var(--space-1);
+  }
+
+  .act {
+    padding: var(--space-2) var(--space-4);
+  }
+}
+
+@media (max-width: 560px) {
+  .act-line {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .profile-meta {
+    column-gap: var(--space-3);
+  }
+
+  .profile-meta .sep {
+    display: none;
+  }
+
+  .claims-head,
+  .claims-error {
+    padding: 0 var(--space-4);
+  }
+
+  .claim-row,
+  .claims.can-release .claim-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'scope who'
+      'note note'
+      'time act';
+    row-gap: 2px;
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .cl-scope {
+    grid-area: scope;
+  }
+
+  .cl-who {
+    grid-area: who;
+    justify-content: flex-end;
+  }
+
+  .cl-note {
+    grid-area: note;
+  }
+
+  .cl-note:empty {
+    display: none;
+  }
+
+  .cl-time {
+    grid-area: time;
+    text-align: left;
+  }
+
+  .cl-act {
+    grid-area: act;
+  }
+
+  .hold-row,
+  .holds.can-release .hold-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'scope time'
+      'note act';
+    row-gap: 2px;
+    padding: var(--space-2) 0;
+  }
+
+  .hold-scope {
+    grid-area: scope;
+  }
+
+  .hold-note {
+    grid-area: note;
+  }
+
+  .hold-time {
+    grid-area: time;
+  }
+
+  .hold-act {
+    grid-area: act;
+  }
+
+  .ping-fields {
+    flex-wrap: wrap;
+  }
+
+  .ping-msg {
+    flex: 1 1 100%;
+  }
+
+  .ping-fields .btn {
+    flex: 1 1 auto;
+    height: var(--control-height-comfortable);
+  }
+}

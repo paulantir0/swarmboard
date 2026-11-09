@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import { api, ApiError, type InvitePreview } from '../api'
 import { Icon } from '../components/Icon'
@@ -14,17 +14,31 @@ export function parseInvite(input: string): string | null {
 
 function joinError(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.status === 404) return 'Invite link is invalid or was revoked'
-    if (err.status === 409) return 'That org is full'
-    if (err.status === 429) return 'Too many tries, wait a minute'
-    return err.message
+    if (err.status === 404) return 'This invite link is invalid or was replaced. Ask for a new one.'
+    if (err.status === 409) return 'That org is full. Ask an admin to make room.'
+    if (err.status === 429) return 'Too many tries. Wait a minute, then try again.'
+    return err.message ? err.message.charAt(0).toUpperCase() + err.message.slice(1) : 'Could not join. Try again.'
   }
-  return 'Could not join'
+  return 'Could not join. Check your connection and try again.'
 }
 
 /** Paste an invite link (or code), confirm the org, join, switch to it. */
-export function JoinForm({ refreshMe, compact, autoFocus, onDone }: { refreshMe: () => Promise<void>; compact?: boolean; autoFocus?: boolean; onDone?: () => void }) {
+export function JoinForm({
+  refreshMe,
+  compact,
+  autoFocus,
+  label,
+  onDone,
+}: {
+  refreshMe: () => Promise<void>
+  compact?: boolean
+  autoFocus?: boolean
+  /** A visible field label; without one the field is labelled for screen readers only. */
+  label?: string
+  onDone?: () => void
+}) {
   const navigate = useNavigate()
+  const fieldId = useId()
   const [value, setValue] = useState('')
   const [preview, setPreview] = useState<{ code: string; invite: InvitePreview } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -58,7 +72,7 @@ export function JoinForm({ refreshMe, compact, autoFocus, onDone }: { refreshMe:
     if (busy) return
     const code = parseInvite(value)
     if (!code) {
-      setError(value.trim() ? 'Not an invite link' : '')
+      setError(value.trim() ? 'That doesn’t look like an invite link. Paste the whole link or its code.' : '')
       return
     }
     if (preview?.code === code && !preview.invite.full) return void join(code)
@@ -76,11 +90,17 @@ export function JoinForm({ refreshMe, compact, autoFocus, onDone }: { refreshMe:
 
   return (
     <div className={`join ${compact ? 'compact' : ''}`}>
+      {label ? (
+        <label className="label" htmlFor={fieldId}>
+          {label}
+        </label>
+      ) : null}
       <form className="inline-form" onSubmit={lookup}>
         <input
-          className="field mono join-field"
-          placeholder="Invite link or code"
-          aria-label="Invite link"
+          id={fieldId}
+          className="field join-field"
+          placeholder="Paste an invite link…"
+          aria-label={label ? undefined : 'Invite link'}
           value={value}
           autoFocus={autoFocus}
           spellCheck={false}
@@ -100,28 +120,23 @@ export function JoinForm({ refreshMe, compact, autoFocus, onDone }: { refreshMe:
         {!preview ? (
           <button className={`btn ${compact ? 'btn-sm' : ''}`} type="submit" disabled={busy || !value.trim()}>
             <Icon name="logIn" size={14} />
-            Join
+            {busy ? 'Checking…' : 'Join'}
           </button>
         ) : null}
       </form>
       {preview ? (
         <div className="join-confirm" role="status">
           {preview.invite.full ? (
-            <span>
-              <strong>{preview.invite.team_name}</strong> is full{' '}
-              <span className="mono muted">
-                {preview.invite.member_count}/{preview.invite.max_members}
-              </span>
+            <span className="join-q">
+              <strong>{preview.invite.team_name}</strong> is full ({preview.invite.member_count} of {preview.invite.max_members} members).
             </span>
           ) : (
             <>
               <span className="join-q">
-                Join <strong>{preview.invite.team_name}</strong> <span className="muted">(invited by </span>
-                <span className="mono">{preview.invite.inviter_handle}</span>
-                <span className="muted">)?</span>
+                Join <strong>{preview.invite.team_name}</strong>? <span className="muted">Invited by</span> <span className="mono">{preview.invite.inviter_handle}</span>
               </span>
               <button ref={joinRef} className="btn btn-primary btn-xs" onClick={() => void join(preview.code)} disabled={busy}>
-                Join
+                {busy ? 'Joining…' : 'Join'}
               </button>
             </>
           )}
@@ -130,7 +145,11 @@ export function JoinForm({ refreshMe, compact, autoFocus, onDone }: { refreshMe:
           </button>
         </div>
       ) : null}
-      {error ? <p className="error-text join-error">{error}</p> : null}
+      {error ? (
+        <p className="error-text join-error" role="alert">
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }

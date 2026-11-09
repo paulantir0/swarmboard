@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ClipboardEvent,
@@ -202,7 +203,7 @@ export function UploadList({ items, onDismiss }: { items: UploadItem[]; onDismis
               <span className="upload-bar" aria-hidden="true">
                 <span style={{ transform: `scaleX(${Math.max(0.04, u.progress)})` }} />
               </span>
-              <span className="upload-pct mono">{Math.round(u.progress * 100)}%</span>
+              <span className="upload-pct">{Math.round(u.progress * 100)}%</span>
             </>
           )}
         </li>
@@ -211,16 +212,39 @@ export function UploadList({ items, onDismiss }: { items: UploadItem[]; onDismis
   )
 }
 
-/** Markdown textarea with file paste/drop/attach (uploads, then inserts markdown at the cursor). Cmd/Ctrl+Enter submits. */
+const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
+
+/** The submit shortcut as a keycap, riding inside the button it triggers. */
+export function SubmitKey() {
+  return (
+    <span className="kbd submit-kbd" aria-hidden="true">
+      {MOD_KEY} ↵
+    </span>
+  )
+}
+
+/** For aria-keyshortcuts on the button that SubmitKey sits in. */
+export const SUBMIT_SHORTCUT = MOD_KEY === '⌘' ? 'Meta+Enter' : 'Control+Enter'
+
+/**
+ * Markdown textarea with file paste/drop/attach (uploads, then inserts markdown at the cursor).
+ * Cmd/Ctrl+Enter submits, Escape cancels. `grow` starts at `rows` and grows with the text.
+ */
 export function MarkdownField(props: {
   teamId: string
   value: string
   onChange: (v: string) => void
   onSubmit?: () => void
+  /** Escape in the field. */
+  onCancel?: () => void
   placeholder?: string
   rows?: number
+  /** Grow with the content from `rows` lines (up to about half the viewport) instead of a fixed box. */
+  grow?: boolean
   autoFocus?: boolean
   label?: string
+  /** Keep the label for assistive tech only (the placeholder says the rest). */
+  hideLabel?: boolean
   id?: string
   /** Buttons rendered at the right end of the toolbar row. */
   actions?: ReactNode
@@ -229,7 +253,7 @@ export function MarkdownField(props: {
   /** Called when uploads start or finish, so the parent can hold submit. */
   onBusyChange?: (busy: boolean) => void
 }) {
-  const { teamId, value, onChange, onSubmit, placeholder, rows = 4, autoFocus, label, id, actions, dropTarget, onBusyChange } = props
+  const { teamId, value, onChange, onSubmit, onCancel, placeholder, rows = 4, grow, autoFocus, label, hideLabel, id, actions, dropTarget, onBusyChange } = props
   const ref = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
@@ -249,10 +273,20 @@ export function MarkdownField(props: {
     }
   }
 
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!grow || !el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`
+  }, [grow, value])
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && onSubmit) {
       e.preventDefault()
       if (!uploads.busy) onSubmit()
+    } else if (e.key === 'Escape' && onCancel) {
+      e.preventDefault()
+      onCancel()
     }
   }
 
@@ -274,14 +308,14 @@ export function MarkdownField(props: {
       onDrop={onDrop}
     >
       {label ? (
-        <label className="label" htmlFor={id}>
+        <label className={hideLabel ? 'visually-hidden' : 'label'} htmlFor={id}>
           {label}
         </label>
       ) : null}
       <textarea
         id={id}
         ref={ref}
-        className="textarea"
+        className={`textarea ${grow ? 'textarea-grow' : ''}`}
         rows={rows}
         placeholder={placeholder}
         value={value}
@@ -293,11 +327,11 @@ export function MarkdownField(props: {
       />
       <UploadList items={uploads.items} onDismiss={uploads.dismiss} />
       <div className="md-tools">
-        <button type="button" className="btn btn-ghost btn-xs" onClick={() => fileRef.current?.click()} title="Attach files (or drop, or paste)">
+        <button type="button" className="btn btn-ghost btn-xs md-attach" onClick={() => fileRef.current?.click()} title="Attach files (or drop or paste them)">
           <Icon name="paperclip" size={12} />
-          {pending ? `Uploading ${pending}` : 'Attach'}
+          {pending ? `Uploading ${pending}…` : 'Attach'}
         </button>
-        <span className="md-hint muted">Markdown</span>
+        <span className="md-hint">Markdown</span>
         {actions ? <span className="md-actions">{actions}</span> : null}
         <input
           ref={fileRef}

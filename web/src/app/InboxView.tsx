@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../api'
 import { Ago } from '../components/Ago'
@@ -17,25 +17,27 @@ export function InboxView() {
   const inbox = usePoll(() => api.inbox(teamId, true), [teamId])
   const [composing, setComposing] = useState(false)
   const [replyTo, setReplyTo] = useState<string | null>(null)
-  const marked = useRef(new Set<string>())
+  const [sent, setSent] = useState<{ id: string; summary: string } | null>(null)
+  // Pings that were unread when they arrived on screen keep their marker for the whole visit.
+  const [unread, setUnread] = useState<ReadonlySet<string>>(() => new Set())
 
-  // Viewing the inbox marks it read; unread pings keep their marker until the next refresh.
+  // Viewing the inbox marks it read.
   useEffect(() => {
-    const fresh = (inbox.data ?? []).filter((p) => !p.read_at && !marked.current.has(p.id))
+    const fresh = (inbox.data ?? []).filter((p) => !p.read_at && !unread.has(p.id))
     if (fresh.length === 0) return
-    for (const p of fresh) marked.current.add(p.id)
+    setUnread((prev) => new Set([...prev, ...fresh.map((p) => p.id)]))
     api
       .markInboxRead(teamId)
       .then(() => refreshUnread())
       .catch(() => {})
-  }, [inbox.data, teamId, refreshUnread])
+  }, [inbox.data, teamId, refreshUnread, unread])
 
   const pings = inbox.data ?? []
 
   return (
     <div className="view">
       <ViewHeader title="Inbox">
-        <button className="btn btn-sm" onClick={() => setComposing((c) => !c)} aria-expanded={composing}>
+        <button className="btn btn-sm" onClick={() => setComposing((c) => !c)} aria-expanded={composing} aria-label="Send ping">
           <Icon name="send" size={14} />
           <span className="hide-sm">Send ping</span>
         </button>
@@ -46,37 +48,72 @@ export function InboxView() {
         </div>
       ) : null}
       <Loadable ready={Boolean(inbox.data) || Boolean(inbox.error)} label="Loading inbox">
-      {inbox.error && !inbox.data ? (
-        <Empty title="Could not load the inbox" hint={inbox.error.message} />
-      ) : pings.length === 0 ? (
-        <Empty title="No pings" hint="When an agent or teammate pings you, it lands here." />
-      ) : (
-        <ul className="feed">
-          {pings.map((p) => (
-            <li key={p.id} className={`ping ${p.read_at ? '' : 'unread'}`}>
-              <span className="ping-dot" aria-label={p.read_at ? undefined : 'Unread'} />
-              <div className="ping-head">
-                <Who author={p.from} me={me.user.id} />
-                <span className="ping-target mono muted">→ {p.target}</span>
-                {p.post_number ? (
-                  <Link className="ping-post-link mono" to={`${base}/p/${p.post_number}`}>
-                    #{p.post_number}
-                  </Link>
-                ) : null}
-                <span className="spacer" />
-                <Ago ts={p.created_at} className="mono muted" />
-              </div>
-              <Markdown source={p.body} className="ping-body" />
-              <div className="ping-actions">
-                <button className="btn btn-ghost btn-xs" onClick={() => setReplyTo(replyTo === p.id ? null : p.id)} aria-expanded={replyTo === p.id}>
-                  Reply
-                </button>
-              </div>
-              {replyTo === p.id ? <PingForm initialTo={replyTarget(p.from)} postNumber={p.post_number ?? undefined} autoFocus onDone={() => setReplyTo(null)} /> : null}
-            </li>
-          ))}
-        </ul>
-      )}
+        {inbox.error && !inbox.data ? (
+          <Empty
+            title="Could not load the inbox"
+            hint={inbox.error.message}
+            action={
+              <button className="btn btn-sm" onClick={() => void inbox.reload()}>
+                Retry
+              </button>
+            }
+          />
+        ) : pings.length === 0 ? (
+          <Empty title="No pings" hint="When an agent or teammate pings you, it lands here." />
+        ) : (
+          <ul className="feed">
+            {pings.map((p) => {
+              const isUnread = !p.read_at || unread.has(p.id)
+              return (
+                <li key={p.id} className={`ping ${isUnread ? 'unread' : ''}`}>
+                  <span className="ping-dot" />
+                  <div className="ping-head">
+                    {isUnread ? <span className="visually-hidden">Unread: </span> : null}
+                    <Who author={p.from} me={me.user.id} />
+                    <span className="ping-target">
+                      <span aria-hidden="true">→ </span>
+                      <span className="visually-hidden">to </span>
+                      <span className="mono">{p.target}</span>
+                    </span>
+                    {p.post_number ? (
+                      <Link className="ping-post-link mono" to={`${base}/p/${p.post_number}`}>
+                        #{p.post_number}
+                      </Link>
+                    ) : null}
+                    <Ago ts={p.created_at} className="ping-time muted" />
+                  </div>
+                  <Markdown source={p.body} className="ping-body" />
+                  <div className="ping-actions">
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => {
+                        setReplyTo(replyTo === p.id ? null : p.id)
+                        setSent(null)
+                      }}
+                      aria-expanded={replyTo === p.id}
+                    >
+                      Reply
+                    </button>
+                    <span className="ping-sent muted" role="status">
+                      {sent?.id === p.id ? sent.summary : ''}
+                    </span>
+                  </div>
+                  {replyTo === p.id ? (
+                    <PingForm
+                      initialTo={replyTarget(p.from)}
+                      postNumber={p.post_number ?? undefined}
+                      autoFocus
+                      onDone={(summary) => {
+                        setReplyTo(null)
+                        setSent({ id: p.id, summary })
+                      }}
+                    />
+                  ) : null}
+                </li>
+              )
+            })}
+          </ul>
+        )}
       </Loadable>
     </div>
   )

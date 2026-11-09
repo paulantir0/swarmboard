@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { api, type CreatedToken } from '../api'
 import { Ago } from '../components/Ago'
-import { ConfirmButton } from '../components/Confirm'
+import { Confirm } from '../components/Confirm'
 import { CopyButton, Snippet } from '../components/CopyButton'
 import { Empty } from '../components/Empty'
 import { Icon } from '../components/Icon'
@@ -66,6 +66,8 @@ export function Connect() {
   const [created, setCreated] = useState<CreatedToken | null>(() => readPrompt(teamId))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [revokeError, setRevokeError] = useState('')
+  const [revoking, setRevoking] = useState<string | null>(null)
   // A token we just made isn't in the list until the next fetch; don't mistake it for revoked.
   const fresh = useRef<string | null>(null)
 
@@ -96,13 +98,15 @@ export function Connect() {
       setLabel('')
       void tokens.reload()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create token')
+      setError(err instanceof Error ? err.message : 'Could not create the token. Try again.')
     } finally {
       setBusy(false)
     }
   }
 
   const revoke = async (id: string) => {
+    setRevoking(null)
+    setRevokeError('')
     try {
       await api.revokeToken(id)
       if (created?.id === id) {
@@ -111,7 +115,7 @@ export function Connect() {
       }
       void tokens.reload()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not revoke')
+      setRevokeError(err instanceof Error ? err.message : 'Could not revoke the token. Try again.')
     }
   }
 
@@ -125,100 +129,171 @@ export function Connect() {
   return (
     <div className="view">
       <ViewHeader title="Connect" />
-      <div className="page connect">
-        <section className="connect-step" aria-label="Agent prompt">
-          <div className="connect-head">
-            <h2 className="connect-title">Paste this into Claude Code or Codex</h2>
-            {created ? <CopyButton text={prompt} label="Copy prompt" size="sm" className="btn-primary connect-copy" /> : null}
+      <div className="page">
+        <section className="connect-step" aria-labelledby="connect-title">
+          <div className="section-head">
+            <h2 id="connect-title" className="section-title">
+              Connect an agent
+            </h2>
+            <p className="section-lede">Creates a token and a setup prompt. Paste the prompt into Claude Code or Codex on the machine that runs the agent.</p>
           </div>
 
           {created ? (
-            <>
-              <pre className="prompt-body" tabIndex={0} aria-label="Agent prompt">
+            <div className="prompt">
+              <div className="prompt-head">
+                <span className="prompt-title">Setup prompt</span>
+                <span className="prompt-token">
+                  <Icon name="lock" size={12} />
+                  <code className="mono">{created.prefix}…</code>
+                  <span className="prompt-label">{created.label}</span>
+                </span>
+                <span className="spacer" />
+                <button className="btn btn-ghost btn-sm" onClick={reset}>
+                  New prompt
+                </button>
+                <CopyButton text={prompt} label="Copy prompt" size="sm" className="btn-primary" />
+              </div>
+              <pre className="prompt-body" tabIndex={0} aria-label="Setup prompt">
                 <code>{prompt}</code>
               </pre>
-              <div className="prompt-foot">
-                <Icon name="lock" size={12} />
-                <span className="prompt-token mono">{created.prefix}…</span>
-                <span className="muted">{created.label}</span>
-                <span className="spacer" />
-                <button className="btn btn-ghost btn-xs" onClick={reset}>
-                  New token
+            </div>
+          ) : (
+            <form className="field-group" onSubmit={create}>
+              <label className="label" htmlFor="token-name">
+                Name
+              </label>
+              <div className="inline-form">
+                <input
+                  id="token-name"
+                  name="token-name"
+                  className="field"
+                  placeholder={placeholder}
+                  value={label}
+                  maxLength={60}
+                  autoComplete="off"
+                  onChange={(e) => setLabel(e.target.value)}
+                />
+                <button className="btn btn-primary" type="submit" disabled={busy}>
+                  <Icon name="plug" size={14} />
+                  {busy ? 'Creating…' : 'Create prompt'}
                 </button>
               </div>
-            </>
-          ) : (
-            <form className="prompt-empty" onSubmit={create}>
-              <input
-                className="field prompt-label"
-                placeholder={placeholder}
-                aria-label="Token label"
-                value={label}
-                maxLength={60}
-                onChange={(e) => setLabel(e.target.value)}
-              />
-              <button className="btn btn-primary" type="submit" disabled={busy}>
-                <Icon name="plug" size={14} />
-                {busy ? 'Creating' : 'Create prompt'}
-              </button>
+              <p className="help-text">Shown in the token list so you can tell agents apart. Leave it empty to use “{placeholder}”.</p>
             </form>
           )}
-          {error ? <p className="error-text">{error}</p> : null}
+          {error ? (
+            <p className="error-text" role="alert">
+              {error}
+            </p>
+          ) : null}
+
+          {created ? (
+            <details className="disclosure">
+              <summary>
+                <Icon name="chevronRight" size={14} />
+                Manual setup
+              </summary>
+              <div className="disclosure-body">
+                <Snippet title="Claude Code" text={created.setup.claude_code} />
+                <Snippet title="Codex" hint="~/.codex/config.toml" text={created.setup.codex} />
+                <Snippet title="Hooks" hint="~/.claude/settings.json" text={created.setup.claude_hooks} />
+                <Snippet title="AGENTS.md" hint="or CLAUDE.md" text={created.setup.agents_md} />
+                <div className="token-line">
+                  <span className="token-line-label">Token</span>
+                  <code className="token-value mono">{created.token}</code>
+                  <CopyButton text={created.token} name="Copy token" />
+                </div>
+                <div className="token-line">
+                  <span className="token-line-label">MCP URL</span>
+                  <code className="token-value mono">{created.setup.mcp_url}</code>
+                  <CopyButton text={created.setup.mcp_url} name="Copy MCP URL" />
+                </div>
+              </div>
+            </details>
+          ) : null}
         </section>
 
-        {created ? (
-          <details className="disclosure">
-            <summary>
-              <Icon name="chevronRight" size={14} />
-              Manual setup
-            </summary>
-            <div className="disclosure-body">
-              <Snippet title="Claude Code" text={created.setup.claude_code} />
-              <Snippet title="Codex" hint="~/.codex/config.toml" text={created.setup.codex} />
-              <Snippet title="Hooks" hint="~/.claude/settings.json" text={created.setup.claude_hooks} />
-              <Snippet title="AGENTS.md" hint="or CLAUDE.md" text={created.setup.agents_md} />
-              <div className="token-line">
-                <span className="muted">Token</span>
-                <code className="token-value">{created.token}</code>
-                <CopyButton text={created.token} />
-              </div>
-              <div className="token-line">
-                <span className="muted">MCP URL</span>
-                <code className="token-value">{created.setup.mcp_url}</code>
-                <CopyButton text={created.setup.mcp_url} />
-              </div>
-            </div>
-          </details>
-        ) : null}
-
-        <section className="block">
-          <div className="block-head">
-            <h2 className="block-title">Tokens</h2>
-            {tokens.data?.length ? <span className="mono muted">{tokens.data.length}</span> : null}
-          </div>
-          <Loadable ready={Boolean(tokens.data) || Boolean(tokens.error)} label="Loading tokens" className="loadable-inline">
+        <section aria-labelledby="tokens-title">
+          <h2 id="tokens-title" className="section-title">
+            Tokens
+            {tokens.data?.length ? <span className="section-count">{tokens.data.length}</span> : null}
+          </h2>
+          <Loadable ready={Boolean(tokens.data) || Boolean(tokens.error)} label="Loading tokens…" className="loadable-inline">
             {tokens.error && !tokens.data ? (
-              <Empty compact title="Could not load tokens" hint={tokens.error.message} />
+              <Empty
+                compact
+                title="Could not load tokens"
+                hint={tokens.error.message}
+                action={
+                  <button className="btn btn-sm" onClick={() => void tokens.reload()}>
+                    Retry
+                  </button>
+                }
+              />
             ) : (tokens.data ?? []).length === 0 ? (
               <Empty compact title="No tokens yet" hint="Each prompt you create carries its own token." />
             ) : (
-              <ul className="token-list">
-                {(tokens.data ?? []).map((t) => (
-                  <li key={t.id} className={`token-row ${created?.id === t.id ? 'current' : ''}`}>
-                    <code className="mono token-prefix">{t.prefix}…</code>
-                    <span className="token-label">{t.label}</span>
-                    <span className="muted token-meta" title={fullDate(t.created_at)}>
-                      {shortDate(t.created_at)}
-                    </span>
-                    <span className="muted token-meta mono">{t.last_used_at ? <Ago ts={t.last_used_at} prefix="used" /> : 'unused'}</span>
-                    <ConfirmButton className="btn btn-xs btn-danger" question="Revoke?" confirmLabel="Revoke" danger onConfirm={() => revoke(t.id)}>
-                      Revoke
-                    </ConfirmButton>
-                  </li>
-                ))}
-              </ul>
+              <table className="settings-table token-table">
+                <thead>
+                  <tr>
+                    <th scope="col" className="token-prefix">
+                      Token
+                    </th>
+                    <th scope="col">Name</th>
+                    <th scope="col" className="token-meta">
+                      Created
+                    </th>
+                    <th scope="col" className="token-meta">
+                      Last used
+                    </th>
+                    <th scope="col" className="cell-act">
+                      <span className="visually-hidden">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(tokens.data ?? []).map((t) => (
+                    <tr key={t.id} className={created?.id === t.id ? 'current' : undefined}>
+                      <td className="token-prefix">
+                        <code className="mono">{t.prefix}…</code>
+                      </td>
+                      <td className="token-label" title={t.label}>
+                        {t.label}
+                      </td>
+                      {revoking === t.id ? (
+                        <td className="cell-act cell-confirm" colSpan={3}>
+                          <Confirm
+                            question="Revoke? Agents using it lose access."
+                            confirmLabel="Revoke"
+                            danger
+                            onConfirm={() => void revoke(t.id)}
+                            onCancel={() => setRevoking(null)}
+                          />
+                        </td>
+                      ) : (
+                        <>
+                          <td className="token-meta" title={fullDate(t.created_at)}>
+                            {shortDate(t.created_at)}
+                          </td>
+                          <td className="token-meta muted">{t.last_used_at ? <Ago ts={t.last_used_at} /> : 'Never'}</td>
+                          <td className="cell-act">
+                            <button className="btn btn-sm btn-quiet-danger" onClick={() => setRevoking(t.id)}>
+                              Revoke
+                            </button>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </Loadable>
+          {revokeError ? (
+            <p className="error-text" role="alert">
+              {revokeError}
+            </p>
+          ) : null}
         </section>
       </div>
     </div>

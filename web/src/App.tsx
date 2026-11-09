@@ -1,4 +1,5 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
+import { useEffect } from 'react'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router'
 import { LegacyRedirect, Shell, TeamRedirect } from './app/Shell'
 import { PostList } from './app/PostList'
 import { PostView } from './app/PostView'
@@ -14,11 +15,25 @@ import { AgentProfile, MemberProfile } from './app/Profiles'
 import { Landing } from './pages/Landing'
 import { Auth } from './pages/Auth'
 import { Join } from './pages/Join'
+import { setTitle } from './lib/title'
+
+const STATIC_TITLES: Record<string, string | null> = { '/': null, '/auth': 'Sign in', '/new': 'Create org' }
+
+/** Tab titles for the pages outside an org; the shell titles everything under /:slug. */
+function StaticTitles() {
+  const { pathname } = useLocation()
+  useEffect(() => {
+    if (pathname in STATIC_TITLES) setTitle(STATIC_TITLES[pathname])
+    else if (pathname.startsWith('/join/')) setTitle('Join')
+  }, [pathname])
+  return null
+}
 
 // Static paths outrank "/:slug" in React Router, and the shell bounces reserved slugs to "/".
 export function App() {
   return (
     <BrowserRouter>
+      <StaticTitles />
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/auth" element={<Auth />} />

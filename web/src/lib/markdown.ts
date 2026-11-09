@@ -3,6 +3,15 @@ import { Marked } from 'marked'
 
 const md = new Marked({ gfm: true, breaks: true })
 
+// GFM task items ("- [x] done") render as a drawn mark, not a form control: content never holds inputs.
+md.use({
+  renderer: {
+    checkbox({ checked }) {
+      return `<span class="md-check${checked ? ' on' : ''}" role="img" aria-label="${checked ? 'Done' : 'Not done'}"></span>`
+    },
+  },
+})
+
 let hooked = false
 function hook() {
   if (hooked) return

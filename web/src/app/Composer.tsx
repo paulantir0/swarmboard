@@ -2,14 +2,12 @@ import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { api, POST_KINDS, type PostKind } from '../api'
 import { Icon } from '../components/Icon'
-import { MarkdownField } from '../components/MarkdownField'
+import { MarkdownField, SUBMIT_SHORTCUT, SubmitKey } from '../components/MarkdownField'
 import { PriorityIcon } from '../components/Marks'
 import { Select } from '../components/Select'
 import { KIND_LABEL, PRIORITY_LABEL } from '../lib/labels'
 import { useShell } from './context'
 import { ViewHeader } from './ViewHeader'
-
-const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
 
 export function Composer() {
   const { teamId, base, boards, refreshBoards } = useShell()
@@ -46,13 +44,14 @@ export function Composer() {
       void refreshBoards()
       navigate(`${base}/p/${post.number}`, { replace: true })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create post')
+      setError(err instanceof Error ? err.message : 'Could not create the post. Try again.')
       setBusy(false)
     }
   }
 
+  const backHref = `${base}${initialBoard ? `?board=${encodeURIComponent(initialBoard)}` : ''}`
   const back = (
-    <Link className="btn btn-ghost btn-sm btn-icon" to={`${base}${initialBoard ? `?board=${encodeURIComponent(initialBoard)}` : ''}`} aria-label="Back">
+    <Link className="btn btn-ghost btn-sm btn-icon" to={backHref} aria-label="Back">
       <Icon name="arrowLeft" />
     </Link>
   )
@@ -60,15 +59,17 @@ export function Composer() {
   return (
     <div className="view">
       <ViewHeader title="New post" back={back} />
-      <form className="composer" onSubmit={submit}>
+      <form className="page composer" onSubmit={submit}>
         <div className="composer-meta">
           <span className="pill-field">
             <Icon name="hash" size={14} />
             <input
               className="pill-input mono"
               aria-label="Topic"
-              placeholder="topic"
+              placeholder="Topic"
               list="composer-topics"
+              autoComplete="off"
+              spellCheck={false}
               value={board || boards[0]?.key || ''}
               onChange={(e) => setBoard(e.target.value)}
               size={Math.max(6, (board || boards[0]?.key || '').length + 1)}
@@ -99,6 +100,8 @@ export function Composer() {
           className="field field-title"
           placeholder="Title"
           aria-label="Title"
+          name="title"
+          autoComplete="off"
           value={title}
           autoFocus
           maxLength={200}
@@ -109,6 +112,9 @@ export function Composer() {
           value={body}
           onChange={setBody}
           onSubmit={() => void submit()}
+          label="Details"
+          hideLabel
+          id="post-body"
           placeholder="Details"
           rows={10}
           dropTarget={1}
@@ -121,20 +127,26 @@ export function Composer() {
                   Claim it
                 </label>
               ) : null}
-              <span className="kbd-hint" title={`${MOD_KEY} + Enter`}>
-                <span className="kbd">{MOD_KEY}</span>
-                <span className="kbd">↵</span>
-              </span>
-              <Link className="btn btn-ghost btn-sm" to={`${base}${initialBoard ? `?board=${encodeURIComponent(initialBoard)}` : ''}`}>
+              <Link className="btn btn-ghost btn-sm" to={backHref}>
                 Cancel
               </Link>
-              <button className="btn btn-primary btn-sm" type="submit" disabled={busy || uploading || !title.trim() || !boardKey}>
-                Create post
+              <button
+                className="btn btn-primary btn-sm"
+                type="submit"
+                disabled={busy || uploading || !title.trim() || !boardKey}
+                aria-keyshortcuts={SUBMIT_SHORTCUT}
+              >
+                {busy ? 'Creating…' : 'Create post'}
+                <SubmitKey />
               </button>
             </>
           }
         />
-        {error ? <p className="error-text">{error}</p> : null}
+        {error ? (
+          <p className="error-text" role="alert">
+            {error}
+          </p>
+        ) : null}
       </form>
     </div>
   )

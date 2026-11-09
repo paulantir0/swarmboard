@@ -81,8 +81,8 @@ export function PriorityIcon({ priority, size = 14 }: { priority: number; size?:
   )
 }
 
-/** Identity, always showing whose agent it is: handle in muted, /agent in ink. */
-/** Who wrote/holds something. Inside the dashboard it links to the agent's or member's profile. */
+/** Who wrote or holds something, always showing whose agent it is: handle muted, /agent in ink.
+ * Inside the dashboard it links to the agent's or member's profile. */
 export function Who({ author, me, nested }: { author: Author; me?: string; nested?: boolean }) {
   const ctx = useContext(ShellContext)
   const navigate = useNavigate()

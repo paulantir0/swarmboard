@@ -1,0 +1,665 @@
+/* Inside the app a disabled primary goes neutral instead of a washed-out accent slab. */
+:where(.app, .solo) .btn-primary:disabled {
+  border-color: var(--color-border);
+  background: var(--color-surface-recessed);
+  color: var(--color-ink-muted);
+  opacity: 1;
+}
+
+.field-sm {
+  height: var(--control-height-compact);
+  font-size: var(--text-sm);
+  padding: 0 var(--space-2);
+}
+
+/* View header */
+.view {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.view-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--topbar-height);
+  padding: 0 var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-canvas);
+}
+
+.view-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-view-title);
+  font-weight: 600;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.view-subtitle {
+  margin-left: var(--space-2);
+  overflow: hidden;
+  color: var(--color-ink-muted);
+  font-weight: 400;
+  text-overflow: ellipsis;
+}
+
+/* Counts and times are Inter with tabular figures, never mono (even when a .mono class rides along). */
+.view-count {
+  margin-left: var(--space-2);
+  color: var(--color-ink-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.view-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  margin-right: calc(var(--space-1) * -1);
+}
+
+.crumb {
+  color: var(--color-ink-muted);
+}
+
+.crumb:hover {
+  color: var(--color-ink);
+}
+
+.crumb-sep {
+  color: var(--color-border-strong);
+}
+
+/* Document views (connect, team, profiles, composer): one column, aligned with the view title. */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  width: 100%;
+  max-width: calc(var(--content-max) + 2 * var(--gutter));
+  padding: var(--space-6) var(--gutter) var(--space-16);
+}
+
+/* Toolbar: search plus filter pills, one 44px row under the header */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: var(--space-2) var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.search {
+  position: relative;
+  flex: 0 1 240px;
+  min-width: 160px;
+}
+
+.search > svg {
+  position: absolute;
+  top: 50%;
+  left: var(--space-2);
+  transform: translateY(-50%);
+  color: var(--color-ink-muted);
+  pointer-events: none;
+}
+
+.search-field {
+  padding-left: 28px;
+  padding-right: 28px;
+}
+
+.search-field::-webkit-search-cancel-button {
+  display: none;
+}
+
+.search-kbd {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.filters-clear {
+  margin-left: var(--space-1);
+}
+
+/* Select: a native <select> with a drawn chevron and an optional leading glyph */
+.select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.select-native {
+  appearance: none;
+  min-width: 0;
+  max-width: 100%;
+  height: var(--control-height-compact);
+  padding: 0 28px 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+  color: var(--color-ink-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 20px;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: var(--motion-transition-control);
+}
+
+.select-native:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  color: var(--color-ink);
+}
+
+.select-native:focus {
+  outline: none;
+}
+
+.select-native:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 0;
+}
+
+.select-native:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.select-chev {
+  position: absolute;
+  right: var(--space-2);
+  color: var(--color-ink-muted);
+  pointer-events: none;
+}
+
+.select-icon {
+  position: absolute;
+  left: var(--space-2);
+  display: flex;
+  color: var(--color-ink-muted);
+  pointer-events: none;
+}
+
+.select-wrap.has-icon .select-native {
+  padding-left: 27px;
+}
+
+.select-wrap.on .select-native {
+  border-color: var(--color-border-strong);
+  background: var(--color-active);
+  color: var(--color-ink);
+}
+
+/* Quiet: a property value that turns into a control on hover */
+.select-wrap.quiet {
+  display: flex;
+  width: 100%;
+}
+
+.select-wrap.quiet .select-native {
+  width: 100%;
+  height: var(--control-height-small);
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-ink);
+}
+
+.select-wrap.quiet .select-chev {
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.select-wrap.quiet:hover .select-native:not(:disabled) {
+  border-color: var(--color-border);
+  background: var(--color-canvas);
+}
+
+.select-wrap.quiet:hover .select-chev,
+.select-wrap.quiet .select-native:focus-visible ~ .select-chev {
+  opacity: 1;
+}
+
+/* A text input dressed as a pill (composer topic) */
+.pill-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-height-compact);
+  padding: 0 10px 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+  color: var(--color-ink-muted);
+  transition: var(--motion-transition-control);
+}
+
+.pill-field:hover {
+  border-color: var(--color-border-strong);
+}
+
+.pill-field:focus-within {
+  border-color: var(--field-border-focus);
+}
+
+.pill-input {
+  min-width: 0;
+  width: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  line-height: 20px;
+}
+
+.pill-input:focus,
+.pill-input:focus-visible {
+  outline: none;
+}
+
+.pill-input::placeholder {
+  color: var(--color-ink-muted);
+  font-family: var(--font-sans);
+}
+
+.group-count {
+  color: var(--color-ink-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Live relative times (<Ago>, <Until>) */
+.ago {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+/* Tags. Kind: a soft fill, no outline. Client and similar ids: a hairline outline in mono. */
+.tag,
+.kind-tag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-ink-secondary);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tag.mono {
+  font-size: 11px;
+}
+
+.kind-tag {
+  border-color: transparent;
+  background: rgba(var(--color-ink-rgb), 0.05);
+}
+
+.kind-tag.k-blocker {
+  background: var(--color-danger-surface);
+  color: var(--color-danger-text);
+}
+
+.status-icon {
+  flex: none;
+  display: block;
+}
+
+.s-open {
+  color: var(--color-ink-muted);
+}
+
+.s-progress {
+  color: var(--color-brand-action);
+}
+
+.s-blocked {
+  color: var(--color-danger);
+}
+
+.s-done {
+  color: var(--color-success);
+}
+
+.s-closed {
+  color: var(--color-border-strong);
+}
+
+.priority-icon {
+  flex: none;
+  display: block;
+  color: var(--color-ink-muted);
+}
+
+.priority-icon.p-urgent {
+  color: var(--color-danger);
+}
+
+/* Identity: handle/agent in mono, the signature */
+.who {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.who-handle {
+  color: var(--color-ink-muted);
+}
+
+.who-agent,
+.who-handle-solo {
+  color: var(--color-ink);
+}
+
+/* Identity links light up on hover. Doubled class so it beats row-level colours (.trow.inactive .who-agent). */
+.who.who-link {
+  cursor: pointer;
+  text-decoration: none;
+  border-radius: 2px;
+}
+
+.who.who-link:hover .who-agent,
+.who.who-link:hover .who-handle-solo {
+  color: var(--color-brand-action);
+  text-decoration: underline;
+  text-decoration-color: rgba(var(--color-brand-action-rgb), 0.4);
+  text-underline-offset: 0.18em;
+}
+
+/* Role tag: Team rows and member profiles. Same size as .tag; the owner gets the accent tint. */
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-ink-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.role-badge.owner {
+  border-color: rgba(var(--color-brand-action-rgb), 0.35);
+  background: var(--color-brand-subtle);
+  color: var(--color-brand-action);
+}
+
+/* The claim chip: who holds it, marked with the accent dot. The signature of the board. */
+.claim {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(var(--color-brand-action-rgb), 0.08);
+}
+
+.title-claim {
+  display: none;
+}
+
+.claim-mark {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-brand-action);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 200px;
+  padding: var(--space-16) var(--space-6);
+  text-align: center;
+}
+
+.empty-title {
+  color: var(--color-ink);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.empty-hint {
+  max-width: 44ch;
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.empty-action {
+  margin-top: var(--space-3);
+}
+
+.empty.compact {
+  align-items: flex-start;
+  min-height: 0;
+  padding: var(--space-4) 0;
+  text-align: left;
+}
+
+.empty.compact .empty-title {
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+
+.section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.section-title .mono,
+.section-count {
+  color: var(--color-ink-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.field.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* Identifier fields (slugs, invite links) type in mono; their placeholders stay Inter. */
+.field.mono::placeholder {
+  font-family: var(--font-sans);
+}
+
+.title-code {
+  padding: 0 3px;
+  border-radius: var(--radius-sm);
+  background: var(--color-code-surface);
+  font-size: 0.88em;
+}
+
+/* Uploads under a field */
+.uploads {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.upload {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-micro);
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+}
+
+.upload > svg {
+  flex: none;
+}
+
+.upload-name {
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  color: var(--color-ink-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-bar {
+  position: relative;
+  flex: 0 1 120px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--color-surface-recessed);
+}
+
+.upload-bar > span {
+  position: absolute;
+  inset: 0;
+  background: var(--color-brand-action);
+  transform-origin: left center;
+  transition: transform var(--motion-duration-fast) linear;
+}
+
+.upload-pct {
+  min-width: 4ch;
+  font-variant-numeric: tabular-nums;
+}
+
+.upload.failed {
+  color: var(--color-danger-text);
+}
+
+.upload-error {
+  min-width: 0;
+  color: var(--color-danger-text);
+}
+
+.upload.failed .btn {
+  margin-left: auto;
+}
+
+/* Inline confirm (replaces native confirm dialogs) */
+.confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: var(--text-xs);
+  animation: content-in var(--motion-duration-fast) var(--motion-ease-standard) both;
+}
+
+.confirm-q {
+  color: var(--color-ink);
+  font-size: var(--text-xs);
+  line-height: 16px;
+}
+
+.btn-danger-solid {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-on-action);
+}
+
+.btn-danger-solid:hover:not(:disabled) {
+  background: var(--color-danger-text);
+  border-color: var(--color-danger-text);
+  color: var(--color-on-action);
+}
+
+/* Responsive */
+@media (max-width: 860px) {
+  .view-header {
+    padding: 0 var(--space-4);
+  }
+
+  .page {
+    padding: var(--space-4) var(--space-4) var(--space-12);
+  }
+
+  .toolbar {
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .search {
+    flex: 1 1 100%;
+  }
+
+  .search-kbd {
+    display: none;
+  }
+
+  .filters .select-wrap {
+    flex: 1 1 0;
+  }
+
+  .filters .select-native {
+    width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .hide-sm {
+    display: none;
+  }
+
+  .title-claim {
+    display: block;
+  }
+
+  .upload-name {
+    max-width: 40%;
+  }
+}

@@ -13,6 +13,16 @@ body {
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* Browser surfaces follow the palette: checkboxes, carets, scrollbars. */
+  accent-color: var(--color-brand-action);
+  caret-color: var(--color-brand-action);
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+@media (pointer: fine) {
+  html {
+    scrollbar-width: thin;
+  }
 }
 
 body {
@@ -176,6 +186,21 @@ button {
   color: var(--button-danger-foreground);
 }
 
+/* Row-level destructive actions (Revoke, Release, Remove): quiet until hovered or focused.
+ * Red is saved for the confirm step (.btn-danger-solid). */
+.btn-quiet-danger {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-ink-secondary);
+}
+
+.btn-quiet-danger:hover:not(:disabled),
+.btn-quiet-danger:focus-visible {
+  background: var(--color-danger-surface);
+  border-color: var(--color-danger-border);
+  color: var(--button-danger-foreground);
+}
+
 .btn-danger-solid {
   background: var(--color-danger);
   border-color: var(--color-danger);
@@ -225,6 +250,13 @@ button {
   font-size: 11px;
 }
 
+/* On a primary button the keycap takes the button's ink. */
+.btn-primary .kbd {
+  border-color: currentColor;
+  color: inherit;
+  opacity: 0.6;
+}
+
 /* Fields */
 .field,
 .select,
@@ -240,7 +272,9 @@ button {
   font-family: var(--font-sans);
   font-size: var(--text-md);
   line-height: 20px;
-  transition: var(--motion-transition-control);
+  transition:
+    var(--motion-transition-control),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .field::placeholder,
@@ -260,6 +294,7 @@ button {
 .textarea:focus {
   outline: none;
   border-color: var(--field-border-focus);
+  box-shadow: 0 0 0 3px rgba(var(--color-focus-rgb), 0.14);
 }
 
 .field:focus-visible,
@@ -280,9 +315,18 @@ button {
   cursor: pointer;
 }
 
+/* Field label above, help or error below. */
 .label {
   display: block;
-  margin-bottom: var(--space-1);
+  margin-bottom: 6px;
+  color: var(--color-ink-secondary);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.help-text {
+  margin-top: 6px;
   color: var(--color-ink-muted);
   font-size: var(--text-xs);
   line-height: 16px;

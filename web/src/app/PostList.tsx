@@ -201,11 +201,20 @@ export function PostList() {
       <Loadable ready={Boolean(posts.data) || Boolean(posts.error)} label="Loading posts">
       <div className="list" role="list">
         {posts.error && !posts.data ? (
-          <Empty title="Could not load posts" hint={posts.error.message} />
+          <Empty
+            title="Could not load posts"
+            hint={posts.error.message}
+            action={
+              <button className="btn btn-sm" onClick={() => void posts.reload()}>
+                Retry
+              </button>
+            }
+          />
         ) : groups.length === 0 ? (
           filtered ? (
             <Empty
               title="No posts match these filters"
+              hint="Try another search or topic, or clear the filters."
               action={
                 <button className="btn btn-sm" onClick={clearFilters}>
                   Clear filters
@@ -233,7 +242,7 @@ export function PostList() {
                   <Icon name={isCollapsed ? 'chevronRight' : 'chevronDown'} size={14} />
                   <StatusIcon status={g.status} />
                   <span className="group-title">{STATUS_LABEL[g.status]}</span>
-                  <span className="group-count mono">{g.posts.length}</span>
+                  <span className="group-count">{g.posts.length}</span>
                 </button>
                 {!isCollapsed
                   ? g.posts.map((p) => <PostRow key={p.id} post={p} base={base} showBoard={!board} meId={me.user.id} fresh={isNew(p.id)} />)
@@ -249,36 +258,44 @@ export function PostList() {
 }
 
 export function PostRow({ post, base, showBoard, meId, fresh }: { post: Post; base: string; showBoard: boolean; meId: string; fresh: boolean }) {
+  const holder = post.claimed_by
+  const heldByAuthor = holder && holder.user_id === post.author.user_id && holder.agent_id === post.author.agent_id
   return (
     <TLink className={`row ${fresh ? 'arrive' : ''}`} to={`${base}/p/${post.number}`} role="listitem">
-      <span className="c-pri">
-        <PriorityIcon priority={post.priority} />
-      </span>
+      <span className="c-pri">{post.priority ? <PriorityIcon priority={post.priority} /> : null}</span>
       <span className="c-num mono">#{post.number}</span>
       <span className="c-status">
         <StatusIcon status={post.status} />
       </span>
       <span className="c-title">
-        {post.claimed_by ? <span className="claim-mark title-claim" title={`Claimed by ${post.claimed_by.display}`} /> : null}
-        <span className="title-text">
+        {holder ? <span className="claim-mark title-claim" title={`Claimed by ${holder.display}`} /> : null}
+        <span className="title-text" title={post.title}>
           <Title text={post.title} />
         </span>
         {post.comment_count > 0 ? (
-          <span className="comment-count mono" title={`${post.comment_count} ${post.comment_count === 1 ? 'reply' : 'replies'}`}>
+          <span className="comment-count" title={`${post.comment_count} ${post.comment_count === 1 ? 'reply' : 'replies'}`}>
             <Icon name="message" size={12} />
             {post.comment_count}
           </span>
         ) : null}
         {showBoard ? <span className="board-tag mono">{post.board_key}</span> : null}
       </span>
-      <span className="c-kind">
-        <KindTag kind={post.kind} />
+      <span className="c-meta">
+        <span className="c-kind">
+          <KindTag kind={post.kind} />
+        </span>
+        {holder ? (
+          <span className="c-claim">
+            <Claim author={holder} meId={meId} nested />
+          </span>
+        ) : null}
+        {heldByAuthor ? null : (
+          <span className="c-author">
+            <Who author={post.author} me={meId} nested />
+          </span>
+        )}
+        <Ago ts={post.updated_at} className="c-time" />
       </span>
-      <span className="c-claim">{post.claimed_by ? <Claim author={post.claimed_by} meId={meId} nested /> : null}</span>
-      <span className="c-author">
-        <Who author={post.author} me={meId} nested />
-      </span>
-      <Ago ts={post.updated_at} className="c-time mono" />
     </TLink>
   )
 }

@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react'
 import { Link } from 'react-router'
-import { api } from '../api'
+import { api, type Agent } from '../api'
 import { Ago } from '../components/Ago'
 import { Empty } from '../components/Empty'
 import { Icon } from '../components/Icon'
@@ -25,13 +25,21 @@ export function Agents() {
       <ViewHeader
         title={
           <>
-            Agents <span className="view-count mono">{active ? `${active} active` : ''}</span>
+            Agents {active ? <span className="view-count">{active} active</span> : null}
           </>
         }
       />
       <Loadable ready={Boolean(agents.data) || Boolean(agents.error)} label="Loading agents">
       {agents.error && !agents.data ? (
-        <Empty title="Could not load agents" hint={agents.error.message} />
+        <Empty
+          title="Could not load agents"
+          hint={agents.error.message}
+          action={
+            <button className="btn btn-sm" onClick={() => void agents.reload()}>
+              Retry
+            </button>
+          }
+        />
       ) : list.length === 0 ? (
         <Empty
           title="No agents yet"
@@ -44,7 +52,7 @@ export function Agents() {
           }
         />
       ) : (
-        <div className="table agents-table" role="table">
+        <div className="agents-table" role="table">
           <div className="thead" role="row">
             <span role="columnheader">Agent</span>
             <span role="columnheader">Working on</span>
@@ -68,21 +76,26 @@ export function Agents() {
                 <span className="a-working" role="cell">
                   {a.working_on || <span className="muted">No status</span>}
                 </span>
-                <span className="a-claimed mono" role="cell">
-                  {a.claimed.length
-                    ? a.claimed.map((n) => (
-                        <Link key={n} className="post-ref" to={`${base}/p/${n}`}>
-                          #{n}
-                        </Link>
-                      ))
-                    : null}
+                <span className="a-claimed" role="cell">
+                  {claims(a).map((scope) => {
+                    const n = postRef(scope)
+                    return n ? (
+                      <Link key={scope} className="a-scope post-ref mono" to={`${base}/p/${n}`}>
+                        {scope}
+                      </Link>
+                    ) : (
+                      <span key={scope} className="a-scope mono" title={scope}>
+                        {scope}
+                      </span>
+                    )
+                  })}
                 </span>
-                <span className="a-seen mono muted" role="cell">
+                <span className="a-seen muted" role="cell">
                   <Ago ts={a.last_seen_at} />
                 </span>
                 <span className="a-act" role="cell">
-                  <button className="btn btn-ghost btn-xs" onClick={() => setPinging(pinging === a.id ? null : a.id)} aria-expanded={pinging === a.id}>
-                    <Icon name="send" size={12} />
+                  <button className="btn btn-ghost btn-sm" onClick={() => setPinging(pinging === a.id ? null : a.id)} aria-expanded={pinging === a.id}>
+                    <Icon name="send" size={14} />
                     Ping
                   </button>
                 </span>
@@ -99,4 +112,15 @@ export function Agents() {
       </Loadable>
     </div>
   )
+}
+
+/** What an agent holds: its lease scopes ("#4", "web/src/map/**", "ci"), else the posts it claimed. */
+function claims(a: Agent): string[] {
+  return a.leases?.length ? [...a.leases].sort() : a.claimed.map((n) => `#${n}`)
+}
+
+/** "#12" → 12 */
+function postRef(scope: string): number | null {
+  const m = /^#(\d+)$/.exec(scope)
+  return m ? Number(m[1]) : null
 }
