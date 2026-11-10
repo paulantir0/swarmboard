@@ -168,29 +168,29 @@ pub fn render(to: &str, link: &str, purpose: &MagicLinkPurpose) -> Rendered {
 <!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><style>{mso_style}</style><![endif]-->
 <style>{style}</style>
 </head>
-<body class="bg" style="margin:0;padding:0;width:100%;background:#fafafa;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+<body class="bg" style="margin:0;padding:0;width:100%;background:#ffffff;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
 <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">{preheader}{preheader_pad}</div>
-<table role="presentation" class="bg" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#fafafa" style="width:100%;background:#fafafa;">
+<table role="presentation" class="bg" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;background:#ffffff;">
 <tr>
-<td class="outer" align="center" style="padding:48px 16px;">
+<td class="outer" align="center" style="padding:56px 24px;">
 <!--[if mso]><table role="presentation" width="480" cellpadding="0" cellspacing="0" border="0" align="center"><tr><td><![endif]-->
-<table role="presentation" class="card" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;max-width:480px;background:#ffffff;border:1px solid #e5e5e5;border-radius:4px;border-collapse:separate;">
+<table role="presentation" class="card" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:480px;">
 <tr>
-<td class="pad" style="padding:32px 36px 28px;">
+<td class="pad" style="padding:0;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-<tr><td class="ink mono" style="padding:0 0 20px;font-family:{mono};font-size:15px;line-height:20px;font-weight:500;letter-spacing:-0.2px;color:#111111;">swarmboard</td></tr>
-<tr><td class="rule" height="1" bgcolor="#e5e5e5" style="height:1px;font-size:1px;line-height:1px;mso-line-height-rule:exactly;background:#e5e5e5;">&nbsp;</td></tr>
-<tr><td class="ink" style="padding:24px 0 20px;font-family:{sans};font-size:15px;line-height:24px;color:#111111;">{lead}</td></tr>
-<tr><td style="padding:0 0 16px;">
+<tr><td class="ink mono" style="padding:0 0 32px;font-family:{mono};font-size:15px;line-height:20px;font-weight:500;letter-spacing:-0.2px;color:#111111;">swarmboard</td></tr>
+<tr><td class="ink" style="padding:0 0 24px;font-family:{sans};font-size:15px;line-height:24px;color:#111111;">{lead}</td></tr>
+<tr><td style="padding:0 0 32px;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-<td class="btn-td" bgcolor="#2c4a7c" style="background:#2c4a7c;border-radius:3px;">
-<a class="btn" href="{href}" target="_blank" style="display:inline-block;padding:12px 22px;border:1px solid #2c4a7c;border-radius:3px;background:#2c4a7c;color:#ffffff;font-family:{sans};font-size:15px;line-height:20px;font-weight:600;text-decoration:none;mso-padding-alt:0;text-underline-color:#2c4a7c;"><!--[if mso]><i style="mso-font-width:150%;mso-text-raise:24pt" hidden>&#8195;</i><span style="mso-text-raise:12pt;"><![endif]-->{button}<!--[if mso]></span><i style="mso-font-width:150%;" hidden>&#8195;&#8203;</i><![endif]--></a>
+<td class="btn-td" bgcolor="#2c4a7c" style="background:#2c4a7c;border-radius:6px;">
+<a class="btn" href="{href}" target="_blank" style="display:inline-block;padding:12px 24px;border:1px solid #2c4a7c;border-radius:6px;background:#2c4a7c;color:#ffffff;font-family:{sans};font-size:15px;line-height:20px;font-weight:600;text-decoration:none;mso-padding-alt:0;text-underline-color:#2c4a7c;"><!--[if mso]><i style="mso-font-width:150%;mso-text-raise:24pt" hidden>&#8195;</i><span style="mso-text-raise:12pt;"><![endif]-->{button}<!--[if mso]></span><i style="mso-font-width:150%;" hidden>&#8195;&#8203;</i><![endif]--></a>
 </td>
 </tr></table>
 </td></tr>
-<tr><td class="muted mono url" style="padding:0 0 24px;font-family:{mono};font-size:12px;line-height:18px;color:#666666;word-break:break-all;"><a class="muted" href="{href}" target="_blank" style="color:#666666;text-decoration:none;word-break:break-all;">{href}</a></td></tr>
+<tr><td class="muted" style="padding:0 0 4px;font-family:{sans};font-size:13px;line-height:20px;color:#666666;">Or paste this link into your browser:</td></tr>
+<tr><td class="muted mono url" style="padding:0 0 32px;font-family:{mono};font-size:12px;line-height:18px;color:#666666;word-break:break-all;"><a class="muted" href="{href}" target="_blank" style="color:#666666;text-decoration:underline;word-break:break-all;">{href}</a></td></tr>
 <tr><td class="rule" height="1" bgcolor="#e5e5e5" style="height:1px;font-size:1px;line-height:1px;mso-line-height-rule:exactly;background:#e5e5e5;">&nbsp;</td></tr>
-<tr><td class="muted" style="padding:16px 0 0;font-family:{sans};font-size:12px;line-height:18px;color:#666666;">{footer}</td></tr>
+<tr><td class="muted" style="padding:20px 0 0;font-family:{sans};font-size:12px;line-height:18px;color:#666666;">{footer}</td></tr>
 </table>
 </td>
 </tr>
@@ -230,12 +230,10 @@ const STYLE: &str = r#"
 body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
 a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; font: inherit !important; }
 @media (max-width: 520px) {
-  .outer { padding: 24px 12px !important; }
-  .pad { padding: 28px 24px 24px !important; }
+  .outer { padding: 32px 20px !important; }
 }
 @media (prefers-color-scheme: dark) {
   .bg { background: #11110f !important; }
-  .card { background: #1b1a17 !important; border-color: #34312b !important; }
   .rule { background: #34312b !important; }
   .ink { color: #f2eee6 !important; }
   .muted { color: #b8b0a4 !important; }
@@ -243,7 +241,6 @@ a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !im
   .btn { background: #9db9ea !important; border-color: #9db9ea !important; color: #11110f !important; }
 }
 [data-ogsb] .bg { background: #11110f !important; }
-[data-ogsb] .card { background: #1b1a17 !important; border-color: #34312b !important; }
 [data-ogsb] .rule { background: #34312b !important; }
 [data-ogsc] .ink { color: #f2eee6 !important; }
 [data-ogsc] .muted { color: #b8b0a4 !important; }
