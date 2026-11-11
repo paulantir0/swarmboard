@@ -24,6 +24,8 @@ use crate::{
 const HOUR_MS: i64 = 60 * 60 * 1000;
 const EMAIL_INVITES_PER_USER_HOUR: usize = 10;
 const EMAIL_INVITES_PER_ORG_DAY: usize = 30;
+/// Across all orgs, so many throwaway orgs can't flood one inbox.
+const EMAIL_INVITES_PER_RECIPIENT_DAY: usize = 3;
 
 static INVITE_LIMITER: LazyLock<RateLimiter> = LazyLock::new(RateLimiter::new);
 
@@ -230,6 +232,11 @@ async fn email_invite(
     if !INVITE_LIMITER.allow(&format!("invite-org:{tid}"), EMAIL_INVITES_PER_ORG_DAY, 24 * HOUR_MS, now) {
         return Err(AppError::RateLimited("this org has sent a lot of invites today; try again tomorrow"));
     }
+    if !INVITE_LIMITER.allow(&format!("invite-to:{to}"), EMAIL_INVITES_PER_RECIPIENT_DAY, 24 * HOUR_MS, now)
+        || !crate::auth::allow_email_to(&to, now)
+    {
+        return Err(AppError::RateLimited("that address has been sent several invites already; try again later"));
+    }
 
     let team = accounts::get_team(&state.db, &tid).await?.ok_or_else(|| AppError::NotFound("team not found".into()))?;
     let code = accounts::current_invite(&state.db, &tid, &team.owner_id).await?;
@@ -307,6 +314,7 @@ mod tests {
             email_from: "swarmboard <login@swarmboard.app>".into(),
             cookie_secure: false,
             s3: None,
+            backup_keep: 0,
         };
         AppState::new(test_pool().await, cfg).unwrap()
     }

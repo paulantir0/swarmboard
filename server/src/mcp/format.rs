@@ -167,7 +167,7 @@ pub fn agent_line(a: &Agent, me: Option<&str>, now: i64) -> String {
 pub fn ping_line(p: &Ping, me_display: Option<&str>, now: i64) -> String {
     let target = match me_display {
         Some(me) if p.target.trim_start_matches('@') == me || me.ends_with(&format!("/{}", p.target)) => "you".to_string(),
-        _ => p.target.clone(),
+        _ => truncate_chars(p.target.trim(), 140),
     };
     let mut ctx = Vec::new();
     if let Some(n) = p.post_number {

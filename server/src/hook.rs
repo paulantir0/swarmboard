@@ -49,6 +49,10 @@ async fn hook(State(state): State<AppState>, Query(q): Query<HookQuery>, headers
             return Json(json!({})).into_response();
         }
     };
+    // Hooks fire on every tool use; this only stops a runaway loop on one token.
+    if !crate::auth::LIMITER.allow(&format!("hook-token:{}", auth.token_id), 3_000, 60 * 1000, now_ms()) {
+        return (StatusCode::TOO_MANY_REQUESTS, Json(json!({}))).into_response();
+    }
     // Legacy installs send the whole hook JSON; read only the three fields we need from it.
     let input: Value = if q.event.is_some() || body.is_empty() { Value::Null } else { serde_json::from_slice(&body).unwrap_or(Value::Null) };
     let event = q.event.as_deref().or_else(|| input.get("hook_event_name").and_then(Value::as_str)).unwrap_or("");

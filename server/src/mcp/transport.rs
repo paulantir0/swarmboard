@@ -12,15 +12,26 @@ use serde_json::{json, Value};
 
 use super::{tools, INSTRUCTIONS};
 use crate::{
+    auth::LIMITER,
     domain::{accounts, collab},
     models::TokenAuth,
     state::AppState,
+    util::now_ms,
 };
 
 pub const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26"];
 pub const LATEST_VERSION: &str = "2025-11-25";
 pub const SESSION_HEADER: &str = "mcp-session-id";
 const VERSION_HEADER: &str = "mcp-protocol-version";
+/// Clients send one message per request in practice; batches were dropped from the spec in 2025-06-18.
+const MAX_BATCH: usize = 20;
+/// Per token. Swarms of headless runs share one token (production peak: 63 new sessions a minute),
+/// so these sit well above that and only stop a runaway loop from flooding a team or the disk.
+const MESSAGES_PER_TOKEN: usize = 1_500;
+const MESSAGES_WINDOW_MS: i64 = 60 * 1000;
+/// Each `initialize` creates a session row.
+const SESSIONS_PER_TOKEN: usize = 600;
+const SESSIONS_WINDOW_MS: i64 = 10 * 60 * 1000;
 
 /// `Authorization: Bearer <token>` (scheme case-insensitive).
 pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -118,11 +129,22 @@ pub async fn post_mcp(State(state): State<AppState>, headers: HeaderMap, body: B
     if messages.is_empty() {
         return http_error(StatusCode::BAD_REQUEST, -32600, "Invalid Request: empty batch");
     }
+    if messages.len() > MAX_BATCH {
+        return http_error(StatusCode::BAD_REQUEST, -32600, &format!("Invalid Request: at most {MAX_BATCH} messages per batch"));
+    }
+    let now = now_ms();
+    let key = format!("mcp-token:{}", auth.token_id);
+    if !(0..messages.len()).all(|_| LIMITER.allow(&key, MESSAGES_PER_TOKEN, MESSAGES_WINDOW_MS, now)) {
+        return http_error(StatusCode::TOO_MANY_REQUESTS, -32000, "Too many requests on this token; slow down for a minute");
+    }
 
     let is_init = |m: &Value| m.get("method").and_then(Value::as_str) == Some("initialize");
     if messages.iter().any(is_init) {
         if messages.len() > 1 {
             return http_error(StatusCode::BAD_REQUEST, -32600, "Invalid Request: initialize must not be batched");
+        }
+        if !LIMITER.allow(&format!("mcp-init:{}", auth.token_id), SESSIONS_PER_TOKEN, SESSIONS_WINDOW_MS, now) {
+            return http_error(StatusCode::TOO_MANY_REQUESTS, -32000, "Too many new sessions on this token; reuse your Mcp-Session-Id");
         }
         return initialize(&state, &auth, &messages[0]).await;
     }

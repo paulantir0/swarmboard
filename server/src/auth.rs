@@ -36,9 +36,14 @@ pub const SESSION_COOKIE: &str = "sb_session";
 const WINDOW_MS: i64 = 15 * 60 * 1000;
 const LINKS_PER_EMAIL: usize = 5;
 const LINKS_PER_IP: usize = 20;
-/// Safety net for the email quota if per-IP limits are dodged with spoofed headers.
+/// Per TCP peer as Caddy saw it. A direct caller can fake its X-Forwarded-For entry, not this, so it
+/// can't spread one machine's requests over invented IPs to drain the global quota. Generous because
+/// browser traffic arrives through a pool of shared Vercel edge addresses.
+const LINKS_PER_PEER: usize = 60;
+/// Safety net for the email quota.
 const LINKS_GLOBAL: usize = 500;
 const VERIFIES_PER_IP: usize = 30;
+const VERIFIES_PER_PEER: usize = 120;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -63,9 +68,9 @@ async fn request_link(State(state): State<AppState>, headers: HeaderMap, JsonBod
     let email = accounts::normalize_email(&req.email).ok_or_else(|| AppError::BadRequest("enter a valid email".into()))?;
     let ip = client_ip(&headers);
     let now = now_ms();
-    if !LIMITER.allow(&format!("link-ip:{ip}"), LINKS_PER_IP, WINDOW_MS, now)
-        || !LIMITER.allow(&format!("link-email:{email}"), LINKS_PER_EMAIL, WINDOW_MS, now)
-        || !LIMITER.allow("link-global", LINKS_GLOBAL, WINDOW_MS, now)
+    if !LIMITER.allow(&format!("link-peer:{}", peer_ip(&headers)), LINKS_PER_PEER, WINDOW_MS, now)
+        || !LIMITER.allow(&format!("link-ip:{ip}"), LINKS_PER_IP, WINDOW_MS, now)
+        || !allow_email_to(&email, now)
     {
         tracing::warn!(%ip, %email, "magic link rate limited");
         return Err(AppError::TooManyRequests);
@@ -98,7 +103,10 @@ struct VerifyRequest {
 async fn verify(State(state): State<AppState>, headers: HeaderMap, jar: CookieJar, JsonBody(req): JsonBody<VerifyRequest>) -> AppResult<(CookieJar, Json<Value>)> {
     check_origin(&state.cfg, &Method::POST, &headers)?;
     let ip = client_ip(&headers);
-    if !LIMITER.allow(&format!("verify-ip:{ip}"), VERIFIES_PER_IP, WINDOW_MS, now_ms()) {
+    let now = now_ms();
+    if !LIMITER.allow(&format!("verify-peer:{}", peer_ip(&headers)), VERIFIES_PER_PEER, WINDOW_MS, now)
+        || !LIMITER.allow(&format!("verify-ip:{ip}"), VERIFIES_PER_IP, WINDOW_MS, now)
+    {
         return Err(AppError::TooManyRequests);
     }
     let claim = accounts::consume_login_token(&state.db, &req.token)
@@ -201,6 +209,11 @@ impl FromRequestParts<AppState> for CurrentUser {
         check_origin(&state.cfg, &parts.method, &parts.headers)?;
         let secret = session_secret(&parts.headers).ok_or(AppError::Unauthorized)?;
         let user = accounts::session_user(&state.db, &secret).await?.ok_or(AppError::Unauthorized)?;
+        if !matches!(parts.method, Method::GET | Method::HEAD | Method::OPTIONS)
+            && !LIMITER.allow(&format!("write-user:{}", user.id), WRITES_PER_USER, WRITES_WINDOW_MS, now_ms())
+        {
+            return Err(AppError::RateLimited("too many changes at once; wait a few minutes"));
+        }
         let current = CurrentUser(user);
         parts.extensions.insert(current.clone());
         Ok(current)
@@ -242,11 +255,11 @@ fn check_origin(cfg: &Config, method: &Method, headers: &HeaderMap) -> AppResult
     }
 }
 
+/// Only the web app's origin. Not the API host: it serves user uploads (inline PDFs, images) and no
+/// dashboard, and as a same-site sibling its pages would otherwise carry the session cookie here.
 fn origin_allowed(cfg: &Config, origin: &str) -> bool {
     let origin = origin.trim().trim_end_matches('/');
-    origin.eq_ignore_ascii_case(&cfg.web_url)
-        || origin.eq_ignore_ascii_case(&cfg.public_api_url)
-        || (is_loopback(origin) && is_loopback(&cfg.web_url))
+    origin.eq_ignore_ascii_case(&cfg.web_url) || (is_loopback(origin) && is_loopback(&cfg.web_url))
 }
 
 /// http(s)://localhost[:port], 127.0.0.1, [::1], *.localhost
@@ -278,6 +291,14 @@ pub fn client_ip(headers: &HeaderMap) -> String {
     ip.chars().take(64).collect()
 }
 
+/// The TCP peer Caddy saw: the last `X-Forwarded-For` entry, which Caddy appends itself (a Vercel edge
+/// for dashboard calls, the caller for direct ones). Unlike `client_ip`, a caller can't choose it.
+pub fn peer_ip(headers: &HeaderMap) -> String {
+    let xff = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
+    let last = xff.and_then(|v| v.rsplit(',').map(str::trim).find(|s| !s.is_empty()));
+    last.unwrap_or("unknown").chars().take(64).collect()
+}
+
 /// Sliding-window counter per key. In-memory: resets on restart, which is fine for this.
 pub struct RateLimiter {
     hits: Mutex<HashMap<String, Vec<i64>>>,
@@ -305,7 +326,17 @@ impl RateLimiter {
     }
 }
 
-static LIMITER: LazyLock<RateLimiter> = LazyLock::new(RateLimiter::new);
+/// Every magic-link email (sign-in or invite) counts against its recipient and the global quota.
+pub fn allow_email_to(email: &str, now: i64) -> bool {
+    LIMITER.allow(&format!("link-email:{email}"), LINKS_PER_EMAIL, WINDOW_MS, now) && LIMITER.allow("link-global", LINKS_GLOBAL, WINDOW_MS, now)
+}
+
+/// Shared by every in-memory limit (auth, invites, writes); keys are namespaced by prefix.
+pub static LIMITER: LazyLock<RateLimiter> = LazyLock::new(RateLimiter::new);
+
+/// Dashboard writes per signed-in user. A person clicking never gets near it; a script looping does.
+const WRITES_PER_USER: usize = 300;
+const WRITES_WINDOW_MS: i64 = 5 * 60 * 1000;
 
 // ---------------------------------------------------------------------------------------------
 // Tests
@@ -334,6 +365,7 @@ mod tests {
             email_from: "swarmboard <login@swarmboard.app>".into(),
             cookie_secure: false,
             s3: None,
+            backup_keep: 0,
         }
     }
 
@@ -374,6 +406,17 @@ mod tests {
     }
 
     #[test]
+    fn peer_ip_is_last_hop() {
+        let mut h = HeaderMap::new();
+        assert_eq!(peer_ip(&h), "unknown");
+        h.insert("x-forwarded-for", "1.2.3.4, 5.6.7.8, 198.51.100.9".parse().unwrap());
+        assert_eq!(peer_ip(&h), "198.51.100.9", "a caller's own entries never win");
+        assert_eq!(client_ip(&h), "1.2.3.4");
+        h.insert("x-forwarded-for", ", 198.51.100.9".parse().unwrap());
+        assert_eq!(peer_ip(&h), "198.51.100.9");
+    }
+
+    #[test]
     fn client_ip_first_hop() {
         let mut h = HeaderMap::new();
         assert_eq!(client_ip(&h), "unknown");
@@ -392,7 +435,7 @@ mod tests {
         cfg.web_url = "https://swarmboard.app".into();
         cfg.public_api_url = "https://api.swarmboard.app".into();
         assert!(origin_allowed(&cfg, "https://swarmboard.app"));
-        assert!(origin_allowed(&cfg, "https://api.swarmboard.app"));
+        assert!(!origin_allowed(&cfg, "https://api.swarmboard.app"), "the upload host is not trusted");
         assert!(!origin_allowed(&cfg, "http://localhost:5191"), "no loopback in prod");
         assert!(!origin_allowed(&cfg, "https://evil.swarmboard.app"));
         assert!(!origin_allowed(&cfg, "null"));

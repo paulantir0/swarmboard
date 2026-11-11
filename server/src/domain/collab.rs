@@ -31,6 +31,8 @@ const MAX_TITLE: usize = 200;
 const MAX_BODY: usize = 100_000;
 const MAX_COMMENT: usize = 20_000;
 const MAX_PING: usize = 4_000;
+/// `to` is a handle and agent name (each well under 64 chars) or a keyword.
+const MAX_TARGET: usize = 140;
 const MAX_MENTIONS: usize = 10;
 const MAX_AGENT_NAME: usize = 24;
 
@@ -1039,6 +1041,9 @@ pub async fn resolve_target(db: &SqlitePool, actor: &Actor, raw: &str) -> AppRes
     let t = raw.trim().to_lowercase();
     if t.is_empty() {
         return Err(bad("`to` is required: \"handle/agent\", \"agent\", \"@handle\", \"handle/*\" or \"@all\""));
+    }
+    if t.chars().count() > MAX_TARGET {
+        return Err(bad(format!("`to` is too long (max {MAX_TARGET} chars): use \"handle/agent\", \"@handle\", \"handle/*\" or \"@all\"")));
     }
     let now = now_ms();
     let active_since = now - AGENT_ACTIVE_MS;
@@ -2798,5 +2803,17 @@ pub(crate) mod tests {
         assert_eq!(err.to_string(), "slow down: upload limit");
         check_upload_rate(&rl, "usr_b", 2_000).expect("per-user");
         check_upload_rate(&rl, "usr_a", 1_000 + UPLOAD_WINDOW_MS).expect("window slides");
+    }
+
+    #[tokio::test]
+    async fn ping_target_length_is_capped() {
+        let f = fixture().await;
+        let (_s, me) = named_agent(&f.db, &f.team, &f.paul, "ui").await;
+        let (_s2, _bob) = named_agent(&f.db, &f.team, &f.bob, "api").await;
+        // Padding that slugify would strip must not reach the database.
+        let long = format!("bob/api{}", "-".repeat(10_000));
+        let err = send_ping(&f.db, &me, &long, "hi", None).await.unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)) && err.to_string().contains("too long"), "{err}");
+        send_ping(&f.db, &me, "bob/api", "hi", None).await.unwrap();
     }
 }

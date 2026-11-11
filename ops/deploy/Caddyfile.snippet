@@ -1,33 +1,37 @@
-# Append to the shared Caddyfile (/opt/paulee/Caddyfile on 0phone-runtime), then reload:
-#   docker exec paulee-proxy-1 caddy reload --config /etc/caddy/Caddyfile
+# The api.swarmboard.app block of the shared Caddyfile (/opt/paulee/Caddyfile on 0phone-runtime).
+# The file is bind-mounted into the proxy container as a single file, so edit it in place (no sed -i,
+# which swaps the inode and leaves the container reading the old copy), then validate and reload:
+#   docker exec paulee-proxy-1 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+#   docker exec paulee-proxy-1 caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 # The proxy container must be attached to the swarmboard-edge docker network (deploy.sh does this).
 
 api.swarmboard.app {
 	encode zstd gzip
 
+	request_body {
+		max_size 16MB
+	}
+
 	reverse_proxy swarmboard-api:8191 {
 		# MCP and long responses: don't buffer.
 		flush_interval -1
 
-		# Dashboard calls arrive via Vercel's /api rewrite, so the TCP peer is a Vercel edge.
-		# Caddy would replace X-Forwarded-For with that peer; pass the incoming value through
-		# instead so the API's per-IP rate limit sees the browser's address (first hop).
-		# Direct callers (MCP clients) have no XFF and fall back to X-Real-IP. These headers are
-		# client-controlled for direct callers; the API only uses them for rate-limit keys.
-		header_up X-Forwarded-For {http.request.header.X-Forwarded-For}
-		header_up X-Real-IP {remote_host}
+		# Dashboard calls arrive via Vercel's /api rewrite, so the TCP peer is a Vercel edge that
+		# forwards the browser's address. Keep that first, then append the real peer. The API rate
+		# limits on both: the first entry (per browser, spoofable by direct callers) and the last
+		# (per peer, which nobody can fake).
+		header_up X-Forwarded-For "{http.request.header.X-Forwarded-For}, {http.request.remote.host}"
+		header_up X-Real-IP {http.request.remote.host}
 	}
 
+	# `?` only fills in a header the API didn't set (file responses set their own, stricter ones).
 	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		X-Content-Type-Options nosniff
-		Referrer-Policy strict-origin-when-cross-origin
-		X-Frame-Options DENY
+		?Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		?X-Content-Type-Options nosniff
+		?Referrer-Policy strict-origin-when-cross-origin
+		?X-Frame-Options DENY
+		?Cross-Origin-Opener-Policy same-origin
 		-Server
-	}
-
-	log {
-		output stdout
-		format console
+		-Via
 	}
 }

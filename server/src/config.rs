@@ -25,6 +25,8 @@ pub struct Config {
     pub cookie_secure: bool,
     /// Store uploads in S3 instead of `<data_dir>/files` when `S3_BUCKET` is set.
     pub s3: Option<S3Config>,
+    /// Daily database snapshots kept in `<data_dir>/backups`. 0 turns backups off.
+    pub backup_keep: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,6 +64,7 @@ impl Config {
             email_from: get("EMAIL_FROM", "swarmboard <login@swarmboard.app>"),
             cookie_secure: get("COOKIE_SECURE", "false") == "true",
             s3: S3Config::parse(|k| env::var(k).ok()),
+            backup_keep: get("BACKUP_KEEP", "14").trim().parse().unwrap_or(14),
         }
     }
 

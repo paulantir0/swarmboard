@@ -135,6 +135,7 @@ mod tests {
             email_from: "x".into(),
             cookie_secure: false,
             s3: None,
+            backup_keep: 0,
         }
     }
 

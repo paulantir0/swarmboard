@@ -25,6 +25,10 @@ pub const MAX_MINUTES: i64 = 480;
 /// Queue entries of agents unseen for this long are dropped.
 const STALE_WAIT_MS: i64 = 60 * 60 * 1000;
 const MAX_NOTE: usize = 300;
+/// Caps that keep one agent (or team) from making every claim scan, and SQLite's write lock, huge.
+const MAX_LEASES_PER_AGENT: usize = 100;
+const MAX_WAITS_PER_AGENT: i64 = 25;
+const MAX_LEASES_PER_TEAM: usize = 1_000;
 /// `claim(force:true)` takes over a task whose holder has been silent this long.
 pub const FORCE_IDLE_MS: i64 = 15 * 60 * 1000;
 
@@ -677,6 +681,16 @@ pub async fn claim_with(db: &SqlitePool, actor: &Actor, agent_repo: Option<&str>
         .bind(repo.as_str())
         .fetch_optional(&mut *tx)
         .await?;
+        if already.is_none() {
+            let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM lease_waits WHERE team_id = ?1 AND agent_id = ?2")
+                .bind(actor.team_id.as_str())
+                .bind(agent_id.as_str())
+                .fetch_one(&mut *tx)
+                .await?;
+            if queued >= MAX_WAITS_PER_AGENT {
+                return Err(bad(format!("you're already queued for {queued} things (max {MAX_WAITS_PER_AGENT}); stop waiting on some first")));
+            }
+        }
         let my_id = match already {
             Some(id) => id,
             None => sqlx::query_scalar(
@@ -721,6 +735,13 @@ pub async fn claim_with(db: &SqlitePool, actor: &Actor, agent_repo: Option<&str>
                 .await?;
         }
         None => {
+            let held = active.iter().filter(|l| l.agent_id == agent_id).count();
+            if held >= MAX_LEASES_PER_AGENT {
+                return Err(bad(format!("you hold {held} leases (max {MAX_LEASES_PER_AGENT}); release some, or claim a broader path")));
+            }
+            if active.len() >= MAX_LEASES_PER_TEAM {
+                return Err(bad(format!("this team has {} active leases (max {MAX_LEASES_PER_TEAM}); release some first", active.len())));
+            }
             sqlx::query(
                 "INSERT INTO leases (id, team_id, repo, scope, kind, agent_id, user_id, note, minutes, created_at, expires_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
@@ -1418,5 +1439,28 @@ mod tests {
 
     async fn leases_of(f: &collab::tests::Fixture, a: &Actor) -> Vec<LeaseRow> {
         agent_leases(&f.db, a.agent_id.as_deref().unwrap()).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn per_agent_caps() {
+        let f = collab::tests::fixture().await;
+        let (_s, me) = collab::tests::named_agent(&f.db, &f.team, &f.paul, "hoarder").await;
+        let (_s2, bob) = collab::tests::named_agent(&f.db, &f.team, &f.bob, "waiter").await;
+        for i in 0..MAX_LEASES_PER_AGENT {
+            claim(&f.db, &me, None, &format!("res-{i}"), None, Some(5), false).await.unwrap();
+        }
+        let err = claim(&f.db, &me, None, "one-more", None, Some(5), false).await.unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)) && err.to_string().contains("max 100"), "{err}");
+        // Renewing one already held is fine at the cap.
+        claim(&f.db, &me, None, "res-0", None, Some(5), false).await.unwrap();
+
+        for i in 0..MAX_WAITS_PER_AGENT {
+            let out = claim(&f.db, &bob, None, &format!("res-{i}"), None, Some(5), true).await.unwrap();
+            assert!(matches!(out, ClaimOutcome::Queued { .. }));
+        }
+        let err = claim(&f.db, &bob, None, "res-99", None, Some(5), true).await.unwrap_err();
+        assert!(err.to_string().contains("max 25"), "{err}");
+        // Re-asking for something already queued for doesn't count again.
+        assert!(matches!(claim(&f.db, &bob, None, "res-0", None, Some(5), true).await.unwrap(), ClaimOutcome::Queued { .. }));
     }
 }

@@ -711,6 +711,15 @@ pub async fn remove_member(db: &SqlitePool, team_id: &str, actor_id: &str, targe
         .bind(target_id)
         .execute(&mut *tx)
         .await?;
+    // Every member can read the invite link, so a removed one could rejoin with it: issue a new one.
+    if actor_id != target_id {
+        sqlx::query("UPDATE invites SET revoked_at = ? WHERE team_id = ? AND revoked_at IS NULL")
+            .bind(now_ms())
+            .bind(team_id)
+            .execute(&mut *tx)
+            .await?;
+        insert_invite(&mut tx, team_id, actor_id).await?;
+    }
     let user = handle_of(&mut *tx, target_id).await?;
     let by = handle_of(&mut *tx, actor_id).await?;
     let data = serde_json::json!({ "user": user, "by": by, "user_id": target_id, "by_id": actor_id });
@@ -1367,6 +1376,7 @@ mod tests {
             email_from: "x <x@example.com>".into(),
             cookie_secure: false,
             s3: None,
+            backup_keep: 0,
         };
         let db = crate::db::connect(&cfg).await.unwrap();
         let owner = signup(&db, "owner@example.com").await;
@@ -1497,9 +1507,15 @@ mod tests {
         assert!(forbidden(remove_member(&db, &team, &outsider.id, &max.id).await));
         assert!(matches!(remove_member(&db, &team, &owner.id, &outsider.id).await, Err(AppError::NotFound(_))));
 
+        let code = current_invite(&db, &team, &owner.id).await.unwrap();
         remove_member(&db, &team, &adam.id, &max.id).await.unwrap(); // admin removes a member
+        // The invite link they saw dies with their membership; the new one works for others.
+        assert!(matches!(join_via_invite(&db, &code, &max.id).await, Err(AppError::NotFound(_))), "removed member can't rejoin");
+        assert_ne!(current_invite(&db, &team, &owner.id).await.unwrap(), code);
         remove_member(&db, &team, &owner.id, &eve.id).await.unwrap(); // owner removes an admin
+        let code = current_invite(&db, &team, &owner.id).await.unwrap();
         remove_member(&db, &team, &mia.id, &mia.id).await.unwrap(); // a member leaves
+        assert_eq!(current_invite(&db, &team, &owner.id).await.unwrap(), code, "leaving keeps the link");
         remove_member(&db, &team, &adam.id, &adam.id).await.unwrap(); // an admin leaves
         assert_eq!(list_members(&db, &team).await.unwrap().len(), 1);
         let ev = event_data(&db, &team, "member_removed").await;

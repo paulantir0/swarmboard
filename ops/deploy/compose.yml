@@ -18,6 +18,23 @@ services:
       DATABASE_URL: sqlite:///data/swarmboard.db
     volumes:
       - swarmboard-data:/data
+    # The binary writes only to /data. Shared host: cap what a bug or abuse here can take from the rest.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    memswap_limit: 1g
+    pids_limit: 256
+    cpus: 2
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
+    stop_grace_period: 30s
     networks:
       - swarmboard-edge
     logging:
